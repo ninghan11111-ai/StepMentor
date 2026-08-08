@@ -58,7 +58,8 @@ const stateCopy: Record<SessionState, string> = {
 
 const teacherPrompt = `你是 StepMentor 的林老师，一名高中数学苏格拉底学习教练。
 你需要用自然、简短的中文与学生实时交流。不要直接公布完整答案，先判断学生卡点，再提出一个具体问题，引导学生说出下一步。
-说话时优先输出完整短句，不要把一句话拆成零碎词组。学生没有说清思路时，用一个方向提示；学生答对时，指出具体正确证据并继续追问。每次回复控制在两句话以内。`;
+说话时优先输出完整短句，不要把一句话拆成零碎词组。学生没有说清思路时，用一个方向提示；学生答对时，指出具体正确证据并继续追问。每次只说一到两个短句。
+始终使用中文回答。所有数字、序号和算式都要按中文自然口语读出，数字用汉字表达，不要夹杂英文读法。`;
 
 function arrayBufferToBase64(buffer: ArrayBufferLike) {
   const bytes = new Uint8Array(buffer);
@@ -102,6 +103,7 @@ export default function LiveClassroom() {
   const forceListenRef = useRef(false);
   const nextPlaybackTimeRef = useRef(0);
   const playbackSourcesRef = useRef<AudioBufferSourceNode[]>([]);
+  const turnPlaybackStartedRef = useRef(false);
   const speakBufferRef = useRef("");
   const wasListeningRef = useRef(true);
   const visibleReplyStartedRef = useRef(false);
@@ -137,6 +139,7 @@ export default function LiveClassroom() {
       outputContextRef.current = null;
     }
     nextPlaybackTimeRef.current = 0;
+    turnPlaybackStartedRef.current = false;
     setAvatarLevel(0);
   }
 
@@ -162,9 +165,12 @@ export default function LiveClassroom() {
     const source = outputContext.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(outputContext.destination);
-    const initialDelay = nextPlaybackTimeRef.current > outputContext.currentTime ? 0.08 : 0.32;
+    // Buffer once at the start of an utterance. Adding the delay again after
+    // every underrun creates a repeating pause on slower local inference.
+    const initialDelay = turnPlaybackStartedRef.current ? 0 : 0.22;
     const startAt = Math.max(outputContext.currentTime + initialDelay, nextPlaybackTimeRef.current);
     source.start(startAt);
+    turnPlaybackStartedRef.current = true;
     nextPlaybackTimeRef.current = startAt + audioBuffer.duration;
     playbackSourcesRef.current.push(source);
 
@@ -260,6 +266,8 @@ export default function LiveClassroom() {
       if (!isListening && wasListeningRef.current) {
         speakBufferRef.current = "";
         visibleReplyStartedRef.current = false;
+        turnPlaybackStartedRef.current = false;
+        nextPlaybackTimeRef.current = 0;
       }
       if (message.text) {
         speakBufferRef.current += message.text;
@@ -267,7 +275,9 @@ export default function LiveClassroom() {
       }
       wasListeningRef.current = isListening;
       if (message.audio_data) playAudioChunk(message.audio_data, speakBufferRef.current);
-      if (isListening) setAvatarLevel(0);
+      if (isListening) {
+        setAvatarLevel(0);
+      }
       if (message.kv_cache_length) setKvTokens(message.kv_cache_length);
       return;
     }
@@ -323,9 +333,9 @@ export default function LiveClassroom() {
             generate_audio: true,
             chunk_ms: 1000,
             sample_rate: 16000,
-            force_listen_count: 2,
-            max_new_speak_tokens_per_chunk: 96,
-            length_penalty: 1.08,
+            force_listen_count: 0,
+            max_new_speak_tokens_per_chunk: 24,
+            length_penalty: 1,
           },
         }));
       };
