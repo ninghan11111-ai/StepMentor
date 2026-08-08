@@ -58,7 +58,7 @@ const stateCopy: Record<SessionState, string> = {
 
 const teacherPrompt = `你是 StepMentor 的林老师，一名高中数学苏格拉底学习教练。
 你需要用自然、简短的中文与学生实时交流。不要直接公布完整答案，先判断学生卡点，再提出一个具体问题，引导学生说出下一步。
-当学生没有说清思路时，用一个方向提示；当学生答对时，指出具体正确证据并继续追问。每次回复控制在两句话以内。`;
+说话时优先输出完整短句，不要把一句话拆成零碎词组。学生没有说清思路时，用一个方向提示；学生答对时，指出具体正确证据并继续追问。每次回复控制在两句话以内。`;
 
 function arrayBufferToBase64(buffer: ArrayBufferLike) {
   const bytes = new Uint8Array(buffer);
@@ -162,7 +162,7 @@ export default function LiveClassroom() {
     const source = outputContext.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(outputContext.destination);
-    const initialDelay = nextPlaybackTimeRef.current > outputContext.currentTime ? 0.04 : 0.18;
+    const initialDelay = nextPlaybackTimeRef.current > outputContext.currentTime ? 0.08 : 0.32;
     const startAt = Math.max(outputContext.currentTime + initialDelay, nextPlaybackTimeRef.current);
     source.start(startAt);
     nextPlaybackTimeRef.current = startAt + audioBuffer.duration;
@@ -324,8 +324,8 @@ export default function LiveClassroom() {
             chunk_ms: 1000,
             sample_rate: 16000,
             force_listen_count: 2,
-            max_new_speak_tokens_per_chunk: 48,
-            length_penalty: 1,
+            max_new_speak_tokens_per_chunk: 96,
+            length_penalty: 1.08,
           },
         }));
       };

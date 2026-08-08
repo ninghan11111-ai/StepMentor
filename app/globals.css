@@ -1132,46 +1132,58 @@ h2 {
 }
 
 .mentor-stage.is-speaking > img {
-  transform: scale(calc(1.004 + var(--avatar-level, 0) * 0.012));
-  filter: saturate(calc(1.02 + var(--avatar-level, 0) * 0.05)) brightness(calc(1.01 + var(--avatar-level, 0) * 0.025));
+  transform: translateY(calc(var(--avatar-level, 0) * -3px)) scale(calc(1.006 + var(--avatar-level, 0) * 0.018));
+  filter: saturate(calc(1.03 + var(--avatar-level, 0) * 0.08)) brightness(calc(1.01 + var(--avatar-level, 0) * 0.035));
 }
 
 .mentor-face-overlay {
   position: absolute;
   left: 50%;
-  top: 48%;
-  width: clamp(72px, 7vw, 112px);
-  height: clamp(44px, 4.4vw, 70px);
+  top: 50.5%;
+  width: clamp(84px, 8vw, 124px);
+  height: clamp(62px, 5.8vw, 88px);
   transform: translate(-50%, -50%);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 180ms ease, transform 180ms ease;
+  transition: opacity 120ms ease, transform 120ms ease;
 }
 
 .mentor-stage.is-speaking .mentor-face-overlay {
-  opacity: calc(0.32 + var(--avatar-level, 0) * 0.42);
-  transform: translate(-50%, calc(-50% + var(--avatar-level, 0) * 5px));
+  opacity: calc(0.62 + var(--avatar-level, 0) * 0.34);
+  transform: translate(-50%, calc(-50% + var(--avatar-level, 0) * 7px));
 }
 
 .mentor-face-overlay span:first-child {
   position: absolute;
   left: 50%;
-  bottom: 4px;
-  width: calc(24px + var(--avatar-level, 0) * 22px);
-  height: calc(6px + var(--avatar-level, 0) * 12px);
+  bottom: 10px;
+  width: calc(34px + var(--avatar-level, 0) * 28px);
+  height: calc(8px + var(--avatar-level, 0) * 22px);
   border-radius: 999px;
-  background: rgba(34, 18, 18, 0.76);
-  box-shadow: 0 0 14px rgba(255, 236, 214, 0.34);
+  background: radial-gradient(circle at 50% 38%, rgba(87, 38, 38, 0.88), rgba(34, 18, 18, 0.9) 64%);
+  box-shadow: 0 0 0 2px rgba(255, 205, 196, 0.24), 0 0 18px rgba(255, 236, 214, 0.38);
   transform: translateX(-50%);
+  animation: mentor-mouth 180ms ease-in-out infinite alternate;
 }
 
 .mentor-face-overlay span:last-child {
   position: absolute;
-  inset: auto 0 0;
-  height: calc(18px + var(--avatar-level, 0) * 16px);
+  left: 8px;
+  right: 8px;
+  bottom: 0;
+  height: calc(24px + var(--avatar-level, 0) * 20px);
   border-radius: 50%;
-  border-bottom: 2px solid rgba(255, 246, 230, 0.55);
-  filter: blur(0.2px);
+  border-bottom: 3px solid rgba(255, 246, 230, 0.72);
+  filter: blur(0.1px);
+}
+
+@keyframes mentor-mouth {
+  from {
+    transform: translateX(-50%) scaleY(0.7);
+  }
+  to {
+    transform: translateX(-50%) scaleY(calc(1 + var(--avatar-level, 0) * 0.8));
+  }
 }
 
 .mentor-stage-shade {
