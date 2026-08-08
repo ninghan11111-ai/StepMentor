@@ -102,6 +102,7 @@ function hasSustainedVoice(samples: Float32Array, sampleRate = 16000) {
   const frameSamples = Math.max(1, Math.round(sampleRate * 0.04));
   let consecutiveActiveFrames = 0;
   let maxConsecutiveActiveFrames = 0;
+  let fullChunkEnergy = 0;
 
   for (let start = 0; start < samples.length; start += frameSamples) {
     const end = Math.min(samples.length, start + frameSamples);
@@ -111,11 +112,12 @@ function hasSustainedVoice(samples: Float32Array, sampleRate = 16000) {
     for (let index = start; index < end; index += 1) {
       const value = Math.abs(samples[index]);
       sumSquares += value * value;
+      fullChunkEnergy += value * value;
       if (value > peak) peak = value;
     }
 
     const rms = Math.sqrt(sumSquares / Math.max(1, end - start));
-    const active = rms >= 0.012 || (peak >= 0.08 && rms >= 0.008);
+    const active = rms >= 0.0045 || (peak >= 0.035 && rms >= 0.003);
 
     if (active) {
       consecutiveActiveFrames += 1;
@@ -125,7 +127,8 @@ function hasSustainedVoice(samples: Float32Array, sampleRate = 16000) {
     }
   }
 
-  return maxConsecutiveActiveFrames >= 3;
+  const fullChunkRms = Math.sqrt(fullChunkEnergy / Math.max(1, samples.length));
+  return maxConsecutiveActiveFrames >= 2 || fullChunkRms >= 0.0035;
 }
 
 export default function LiveClassroom() {
