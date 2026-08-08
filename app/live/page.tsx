@@ -52,7 +52,7 @@ const stateCopy: Record<SessionState, string> = {
   offline: "等待连接",
   connecting: "正在连接本地引擎",
   preparing: "正在准备会话",
-  listening: "林老师正在听",
+  listening: "等待你开口",
   speaking: "林老师正在讲解",
   paused: "会话已暂停",
   error: "连接异常",
@@ -96,6 +96,36 @@ function segmentCaption(text: string) {
   }
 
   return units;
+}
+
+function hasSustainedVoice(samples: Float32Array, sampleRate = 16000) {
+  const frameSamples = Math.max(1, Math.round(sampleRate * 0.04));
+  let consecutiveActiveFrames = 0;
+  let maxConsecutiveActiveFrames = 0;
+
+  for (let start = 0; start < samples.length; start += frameSamples) {
+    const end = Math.min(samples.length, start + frameSamples);
+    let sumSquares = 0;
+    let peak = 0;
+
+    for (let index = start; index < end; index += 1) {
+      const value = Math.abs(samples[index]);
+      sumSquares += value * value;
+      if (value > peak) peak = value;
+    }
+
+    const rms = Math.sqrt(sumSquares / Math.max(1, end - start));
+    const active = rms >= 0.012 || (peak >= 0.08 && rms >= 0.008);
+
+    if (active) {
+      consecutiveActiveFrames += 1;
+      maxConsecutiveActiveFrames = Math.max(maxConsecutiveActiveFrames, consecutiveActiveFrames);
+    } else {
+      consecutiveActiveFrames = 0;
+    }
+  }
+
+  return maxConsecutiveActiveFrames >= 3;
 }
 
 export default function LiveClassroom() {
@@ -324,7 +354,8 @@ export default function LiveClassroom() {
       }
 
       const sourceAudio = event.data.audio;
-      const audio = mutedRef.current ? new Float32Array(sourceAudio.length) : sourceAudio;
+      const shouldPassAudio = !mutedRef.current && hasSustainedVoice(sourceAudio);
+      const audio = shouldPassAudio ? sourceAudio : new Float32Array(sourceAudio.length);
       const message: Record<string, unknown> = {
         type: "audio_chunk",
         audio_base64: arrayBufferToBase64(audio.buffer),
