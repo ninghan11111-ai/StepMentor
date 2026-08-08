@@ -10,6 +10,7 @@ import {
   Lightbulb,
   Mic,
   MicOff,
+  Radio,
   RotateCcw,
   Send,
   Sparkles,
@@ -32,6 +33,14 @@ type CoachResponse = {
   diagnosis: string;
   nextStage: number;
   mode: "demo" | "minicpm";
+};
+
+type RealtimeRuntimeStatus = {
+  configured: boolean;
+  online: boolean;
+  runtime: "demo" | "unavailable" | "minicpm-o-4.5-cpp";
+  demoUrl?: string;
+  omniUrl?: string;
 };
 
 type SpeechRecognitionResultEvent = {
@@ -82,6 +91,7 @@ export default function Home() {
   const [cameraOpen, setCameraOpen] = useState(false);
   const [problemImage, setProblemImage] = useState<string | null>(null);
   const [runtimeMode, setRuntimeMode] = useState<"demo" | "minicpm">("demo");
+  const [realtimeRuntime, setRealtimeRuntime] = useState<RealtimeRuntimeStatus | null>(null);
   const [notice, setNotice] = useState("");
   const [reportGenerated, setReportGenerated] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -99,6 +109,30 @@ export default function Home() {
   useEffect(() => {
     return () => {
       streamRef.current?.getTracks().forEach((track) => track.stop());
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    async function checkRealtimeRuntime() {
+      try {
+        const response = await fetch("/api/runtime", { cache: "no-store" });
+        if (!response.ok) return;
+        const status = (await response.json()) as RealtimeRuntimeStatus;
+        if (active) setRealtimeRuntime(status);
+      } catch {
+        if (active) {
+          setRealtimeRuntime({ configured: false, online: false, runtime: "demo" });
+        }
+      }
+    }
+
+    checkRealtimeRuntime();
+    const timer = window.setInterval(checkRealtimeRuntime, 10_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
     };
   }, []);
 
@@ -282,6 +316,14 @@ export default function Home() {
     showNotice("学习卡已生成");
   }
 
+  function openRealtimeConversation() {
+    if (!realtimeRuntime?.online || !realtimeRuntime.demoUrl) {
+      showNotice("本地 MiniCPM-o 实时服务尚未启动");
+      return;
+    }
+    window.location.assign("/live");
+  }
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -296,9 +338,23 @@ export default function Home() {
         </div>
 
         <div className="topbar-actions">
-          <span className={`mode-badge ${runtimeMode === "minicpm" ? "is-live" : ""}`}>
+          <button
+            className="realtime-button"
+            type="button"
+            onClick={openRealtimeConversation}
+            disabled={!realtimeRuntime?.online}
+            title={realtimeRuntime?.online ? "打开流式双工语音" : "本地实时服务未启动"}
+          >
+            <Radio size={15} />
+            实时双工
+          </button>
+          <span className={`mode-badge ${realtimeRuntime?.online || runtimeMode === "minicpm" ? "is-live" : ""}`}>
             <span className="status-dot" />
-            {runtimeMode === "minicpm" ? "MiniCPM-o 在线" : "演示模式"}
+            {realtimeRuntime?.online
+              ? "本地 MiniCPM-o 就绪"
+              : runtimeMode === "minicpm"
+                ? "MiniCPM-o 在线"
+                : "演示模式"}
           </span>
           <button className="icon-button" type="button" onClick={resetSession} title="重新开始" aria-label="重新开始">
             <RotateCcw size={17} />

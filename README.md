@@ -12,6 +12,9 @@
 - 自动生成方法总结、易错点和相似练习
 - 无模型服务时可运行的确定性演示模式
 - OpenAI-compatible MiniCPM-o 服务接入位
+- 本地 MiniCPM-o 4.5 C++/Metal 部署脚本
+- 实时双工 Gateway 健康检查接口
+- 音频驱动数字教师实时课堂页
 
 ## 本地运行
 
@@ -23,6 +26,18 @@ npm run dev
 ```
 
 访问终端显示的本地地址。无需模型服务即可走通完整演示流程。
+
+### 启动本地 MiniCPM-o 4.5
+
+本项目支持通过官方 Comni Gateway 连接本地 `llama.cpp-omni` Metal 后端：
+
+```bash
+npm run local:omni:setup
+npm run local:omni:start
+npm run local:omni:check
+```
+
+启动后从工作台进入 `/live` 使用数字教师实时课堂，或访问 `http://127.0.0.1:8040/audio_duplex` 打开官方诊断页。完整安装、目录约定和硬件边界见 [本地部署文档](docs/local-minicpm-o.md)。
 
 ## 接入 MiniCPM-o 4.5
 
@@ -39,6 +54,7 @@ cp .env.example .env.local
 - `MINICPM_BASE_URL`：模型服务根地址
 - `MINICPM_API_KEY`：可选鉴权令牌
 - `MINICPM_MODEL`：服务注册的模型名
+- `MINICPM_REALTIME_URL`：官方 Comni 实时语音 Gateway 地址
 
 ## 演示流程
 
@@ -53,8 +69,11 @@ cp .env.example .env.local
 ```text
 app/page.tsx             交互式学习工作台
 app/api/coach/route.ts   MiniCPM-o 适配与演示回退
+app/api/runtime/route.ts 本地实时 Gateway 健康检查
+app/live/page.tsx        数字教师双工语音课堂
 app/globals.css          响应式界面样式
 public/og.png            项目分享预览图
+scripts/                 本地 MiniCPM-o 启停与检查脚本
 tests/                   构建产物渲染检查
 ```
 

@@ -4,13 +4,13 @@ import test from "node:test";
 
 const root = new URL("../", import.meta.url);
 
-async function render() {
+async function render(pathname = "/") {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
 
   return worker.fetch(
-    new Request("http://localhost/", { headers: { accept: "text/html" } }),
+    new Request(`http://localhost${pathname}`, { headers: { accept: "text/html" } }),
     { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
     { waitUntil() {}, passThroughOnException() {} },
   );
@@ -27,6 +27,16 @@ test("server-renders the StepMentor workspace", async () => {
   assert.match(html, /一步一步推出来/);
   assert.match(html, /学习状态/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/i);
+});
+
+test("server-renders the digital mentor classroom", async () => {
+  const response = await render("/live");
+  assert.equal(response.status, 200);
+
+  const html = await response.text();
+  assert.match(html, /StepMentor 实时课堂/);
+  assert.match(html, /双工语音陪练/);
+  assert.match(html, /digital-mentor-lin\.jpg/);
 });
 
 test("removes starter-only assets and metadata", async () => {

@@ -9,6 +9,10 @@
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
     "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
+    "local:omni:setup": "bash scripts/setup-local-omni.sh",
+    "local:omni:start": "bash scripts/start-local-omni.sh",
+    "local:omni:stop": "bash scripts/stop-local-omni.sh",
+    "local:omni:check": "bash scripts/check-local-omni.sh",
     "test": "npm run build && node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
   },
