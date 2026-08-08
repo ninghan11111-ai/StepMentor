@@ -14,7 +14,7 @@
 - OpenAI-compatible MiniCPM-o 服务接入位
 - 本地 MiniCPM-o 4.5 C++/Metal 部署脚本
 - 实时双工 Gateway 健康检查接口
-- TalkingHead 3D 数字教师与流式 viseme 唇形
+- 林老师固定形象数字教师与音频驱动的面部/嘴部微动
 - 学习场景摄像头预览与 1 FPS MiniCPM-o Omni 视频帧输入
 - 按音频进度、中英文词边界同步的字幕
 - 浏览器 AEC、降噪与自动增益请求及实际状态展示
@@ -74,10 +74,11 @@ app/page.tsx             交互式学习工作台
 app/api/coach/route.ts   MiniCPM-o 适配与演示回退
 app/api/runtime/route.ts 本地实时 Gateway 健康检查
 app/live/page.tsx        数字教师双工语音课堂
-components/talking-mentor.tsx TalkingHead 流式 PCM 与唇形适配
+components/talking-mentor.tsx 林老师固定素材、流式 PCM 播放与音频驱动微动
 app/globals.css          响应式界面样式
 vendor/talkinghead/      TalkingHead MIT 渲染与播放模块
-public/avatars/          数字人 GLB 素材
+public/digital-mentor-lin.jpg 林老师固定形象素材
+public/avatars/          备用数字人 GLB 素材
 public/og.png            项目分享预览图
 scripts/                 本地 MiniCPM-o 启停与检查脚本
 tests/                   构建产物渲染检查

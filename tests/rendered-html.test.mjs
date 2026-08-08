@@ -36,10 +36,10 @@ test("server-renders the digital mentor classroom", async () => {
   const html = await response.text();
   assert.match(html, /StepMentor 实时课堂/);
   assert.match(html, /双工语音陪练/);
-  assert.match(html, /talking-mentor-canvas/);
+  assert.match(html, /digital-mentor-lin\.jpg/);
   assert.match(html, /学习场景实时画面/);
   assert.match(html, />AEC</);
-  await access(new URL("public/avatars/brunette.glb", root));
+  await access(new URL("public/digital-mentor-lin.jpg", root));
   await access(new URL("vendor/talkinghead/LICENSE", root));
 });
 

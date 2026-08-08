@@ -1,8 +1,7 @@
 "use client";
 
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
-
-import { TalkingHead } from "@/vendor/talkinghead/talkinghead.mjs";
+import Image from "next/image";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type CSSProperties } from "react";
 
 export type TalkingMentorHandle = {
   beginUtterance: () => void;
@@ -15,158 +14,157 @@ type TalkingMentorProps = {
   onReadyChange?: (ready: boolean) => void;
 };
 
-type VisemeName = "sil" | "aa" | "E" | "O" | "U" | "PP" | "SS";
+type PlaybackSource = {
+  source: AudioBufferSourceNode;
+  startAt: number;
+  durationMs: number;
+};
 
-function analyzeVisemes(samples: Float32Array, sampleRate: number, offsetMs: number) {
-  const windowSamples = Math.max(1, Math.round(sampleRate * 0.08));
-  const visemes: VisemeName[] = [];
-  const vtimes: number[] = [];
-  const vdurations: number[] = [];
-
-  for (let start = 0; start < samples.length; start += windowSamples) {
-    const end = Math.min(samples.length, start + windowSamples);
-    let energy = 0;
-    let crossings = 0;
-    let previous = samples[start] ?? 0;
-
-    for (let index = start; index < end; index += 1) {
-      const value = samples[index];
-      energy += value * value;
-      if ((value >= 0 && previous < 0) || (value < 0 && previous >= 0)) crossings += 1;
-      previous = value;
-    }
-
-    const length = Math.max(1, end - start);
-    const rms = Math.sqrt(energy / length);
-    const crossingRate = crossings / length;
-    let viseme: VisemeName;
-
-    if (rms < 0.012) viseme = "sil";
-    else if (crossingRate > 0.18) viseme = "SS";
-    else if (crossingRate > 0.11) viseme = "E";
-    else if (rms > 0.12) viseme = "aa";
-    else if (rms > 0.065) viseme = "O";
-    else if (crossingRate < 0.045) viseme = "U";
-    else viseme = "PP";
-
-    if (visemes.at(-1) === viseme && viseme !== "sil") continue;
-    visemes.push(viseme);
-    vtimes.push(offsetMs + (start / sampleRate) * 1000);
-    vdurations.push(((end - start) / sampleRate) * 1000);
+function getAudioLevel(samples: Float32Array) {
+  if (samples.length === 0) return 0;
+  let sumSquares = 0;
+  for (let index = 0; index < samples.length; index += 1) {
+    sumSquares += samples[index] * samples[index];
   }
-
-  return { visemes, vtimes, vdurations };
+  return Math.min(1, Math.max(0.08, Math.sqrt(sumSquares / samples.length) * 8));
 }
 
 export const TalkingMentor = forwardRef<TalkingMentorHandle, TalkingMentorProps>(
   function TalkingMentor({ onReadyChange }, ref) {
-    const containerRef = useRef<HTMLDivElement | null>(null);
-    const headRef = useRef<TalkingHead | null>(null);
+    const outputContextRef = useRef<AudioContext | null>(null);
+    const nextPlaybackTimeRef = useRef(0);
+    const sourcesRef = useRef<PlaybackSource[]>([]);
+    const timersRef = useRef<number[]>([]);
     const streamStartedRef = useRef(false);
-    const audioOffsetMsRef = useRef(0);
     const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+    const [level, setLevel] = useState(0);
 
     useEffect(() => {
-      const container = containerRef.current;
-      if (!container) return;
-
-      let disposed = false;
-      const head = new TalkingHead(container, {
-        cameraView: "upper",
-        cameraDistance: -0.25,
-        cameraRotateEnable: false,
-        cameraPanEnable: false,
-        cameraZoomEnable: false,
-        lipsyncModules: ["en"],
-        modelFPS: 30,
-        modelPixelRatio: Math.min(window.devicePixelRatio, 1.5),
-        lightAmbientIntensity: 2.4,
-        lightDirectIntensity: 24,
-      });
-      headRef.current = head;
-
-      void head.showAvatar({
-        url: "/avatars/brunette.glb",
-        body: "F",
-        avatarMood: "neutral",
-        lipsyncLang: "en",
-        avatarIdleEyeContact: 0.72,
-        avatarSpeakingEyeContact: 0.86,
-        avatarSpeakingHeadMove: 0.38,
-      }).then(() => {
-        if (disposed) return;
-        setStatus("ready");
-        onReadyChange?.(true);
-      }).catch((error: unknown) => {
-        console.error("TalkingHead avatar failed to load", error);
-        if (disposed) return;
-        setStatus("error");
-        onReadyChange?.(false);
-      });
-
-      const handleVisibility = () => {
-        if (document.visibilityState === "visible") head.start();
-        else head.stop();
-      };
-      document.addEventListener("visibilitychange", handleVisibility);
-
       return () => {
-        disposed = true;
-        document.removeEventListener("visibilitychange", handleVisibility);
         onReadyChange?.(false);
-        head.dispose();
-        headRef.current = null;
+        timersRef.current.forEach((timer) => window.clearTimeout(timer));
+        timersRef.current = [];
+        sourcesRef.current.forEach(({ source }) => {
+          try {
+            source.stop();
+          } catch {
+            // Source may have already ended.
+          }
+          source.disconnect();
+        });
+        sourcesRef.current = [];
+        if (outputContextRef.current) void outputContextRef.current.close();
       };
     }, [onReadyChange]);
 
+    function resetPlayback() {
+      timersRef.current.forEach((timer) => window.clearTimeout(timer));
+      timersRef.current = [];
+      sourcesRef.current.forEach(({ source }) => {
+        try {
+          source.stop();
+        } catch {
+          // Source may have already ended.
+        }
+        source.disconnect();
+      });
+      sourcesRef.current = [];
+      nextPlaybackTimeRef.current = 0;
+      setLevel(0);
+    }
+
     useImperativeHandle(ref, () => ({
       async startStream() {
-        const head = headRef.current;
-        if (!head || status !== "ready") return false;
-        await head.streamStart(
-          {
-            sampleRate: 24000,
-            gain: 1,
-            lipsyncType: "visemes",
-            waitForAudioChunks: true,
-            metrics: { enabled: false },
-          },
-          null,
-          () => {
-            audioOffsetMsRef.current = 0;
-          },
-        );
+        if (status !== "ready") return false;
+        let outputContext = outputContextRef.current;
+        if (!outputContext || outputContext.state === "closed") {
+          outputContext = new AudioContext({ sampleRate: 24000 });
+          outputContextRef.current = outputContext;
+        }
+        await outputContext.resume();
         streamStartedRef.current = true;
-        audioOffsetMsRef.current = 0;
+        nextPlaybackTimeRef.current = outputContext.currentTime + 0.04;
         return true;
       },
       beginUtterance() {
         if (!streamStartedRef.current) return;
-        headRef.current?.streamInterrupt();
-        audioOffsetMsRef.current = 0;
+        resetPlayback();
       },
       streamAudio(samples) {
-        const head = headRef.current;
-        if (!head || !streamStartedRef.current) return false;
-        const durationMs = (samples.length / 24000) * 1000;
-        const timing = analyzeVisemes(samples, 24000, audioOffsetMsRef.current);
-        head.streamAudio({ audio: samples, ...timing });
-        audioOffsetMsRef.current += durationMs;
+        if (!streamStartedRef.current || status !== "ready" || samples.length === 0) return false;
+
+        let outputContext = outputContextRef.current;
+        if (!outputContext || outputContext.state === "closed") {
+          outputContext = new AudioContext({ sampleRate: 24000 });
+          outputContextRef.current = outputContext;
+        }
+
+        const audioBuffer = outputContext.createBuffer(1, samples.length, 24000);
+        audioBuffer.copyToChannel(samples, 0);
+
+        const source = outputContext.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(outputContext.destination);
+
+        const startAt = Math.max(outputContext.currentTime + 0.02, nextPlaybackTimeRef.current);
+        source.start(startAt);
+        nextPlaybackTimeRef.current = startAt + audioBuffer.duration;
+
+        const durationMs = audioBuffer.duration * 1000;
+        const startDelayMs = Math.max(0, (startAt - outputContext.currentTime) * 1000);
+        const levelValue = getAudioLevel(samples);
+        const sourceRecord = { source, startAt, durationMs };
+        sourcesRef.current.push(sourceRecord);
+
+        const startTimer = window.setTimeout(() => setLevel(levelValue), startDelayMs);
+        const endTimer = window.setTimeout(() => setLevel(0), startDelayMs + durationMs + 60);
+        timersRef.current.push(startTimer, endTimer);
+
+        source.onended = () => {
+          source.disconnect();
+          sourcesRef.current = sourcesRef.current.filter((item) => item !== sourceRecord);
+          if (sourcesRef.current.length === 0) setLevel(0);
+        };
+
         return true;
       },
       stopStream() {
-        if (streamStartedRef.current) headRef.current?.streamStop();
+        resetPlayback();
         streamStartedRef.current = false;
-        audioOffsetMsRef.current = 0;
+        if (outputContextRef.current) {
+          void outputContextRef.current.close();
+          outputContextRef.current = null;
+        }
       },
     }), [status]);
 
     return (
-      <div className="talking-mentor" data-status={status}>
-        <div ref={containerRef} className="talking-mentor-canvas" />
+      <div
+        className="talking-mentor"
+        data-status={status}
+        style={{ "--mentor-level": level.toFixed(2) } as CSSProperties & Record<"--mentor-level", string>}
+      >
+        <Image
+          className="talking-mentor-portrait"
+          src="/digital-mentor-lin.jpg"
+          alt="林老师"
+          width={1024}
+          height={1024}
+          priority
+          onLoad={() => {
+            setStatus("ready");
+            onReadyChange?.(true);
+          }}
+          onError={() => {
+            setStatus("error");
+            onReadyChange?.(false);
+          }}
+        />
+        <div className="talking-mentor-face" aria-hidden="true" />
+        <div className="talking-mentor-mouth" aria-hidden="true" />
         {status !== "ready" && (
           <div className="talking-mentor-loading">
-            {status === "loading" ? "正在载入林老师" : "数字人载入失败"}
+            {status === "loading" ? "正在载入林老师" : "林老师形象载入失败"}
           </div>
         )}
       </div>

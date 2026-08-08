@@ -1126,14 +1126,52 @@ h2 {
   inset: 0;
   width: 100%;
   height: 100%;
-  background: #d7e1dc;
+  overflow: hidden;
+  background: #1d2d27;
+  --mentor-level: 0;
 }
 
-.talking-mentor-canvas,
-.talking-mentor-canvas canvas {
-  width: 100% !important;
-  height: 100% !important;
+.talking-mentor-portrait {
+  width: 100%;
+  height: 100%;
   display: block;
+  object-fit: cover;
+  object-position: 50% 42%;
+  transform: scale(calc(1.01 + var(--mentor-level) * 0.012)) translateY(calc(var(--mentor-level) * -3px));
+  transform-origin: 50% 42%;
+  filter: saturate(1.02) contrast(1.02);
+  transition: transform 120ms ease-out, filter 160ms ease-out;
+}
+
+.talking-mentor-face {
+  position: absolute;
+  left: 43.8%;
+  top: 25.5%;
+  width: 12.4%;
+  aspect-ratio: 1;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(255, 255, 255, calc(var(--mentor-level) * 0.16)) 0%, transparent 66%);
+  opacity: calc(0.1 + var(--mentor-level) * 0.65);
+  transform: translateY(calc(var(--mentor-level) * -2px));
+  transition: opacity 90ms ease-out, transform 90ms ease-out;
+  pointer-events: none;
+  mix-blend-mode: soft-light;
+}
+
+.talking-mentor-mouth {
+  position: absolute;
+  left: 48.2%;
+  top: 46.5%;
+  width: clamp(28px, 5.4vw, 72px);
+  height: calc(2px + var(--mentor-level) * 13px);
+  border-radius: 999px;
+  background: rgba(94, 35, 38, calc(0.08 + var(--mentor-level) * 0.26));
+  box-shadow: 0 1px 7px rgba(94, 35, 38, calc(var(--mentor-level) * 0.3));
+  transform: translateX(-50%) scaleX(calc(0.6 + var(--mentor-level) * 0.44));
+  transform-origin: 50% 50%;
+  opacity: calc(var(--mentor-level) * 0.8);
+  transition: height 70ms ease-out, opacity 70ms ease-out, transform 70ms ease-out;
+  pointer-events: none;
 }
 
 .talking-mentor-loading {

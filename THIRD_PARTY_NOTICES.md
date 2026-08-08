@@ -2,9 +2,9 @@
 
 ## TalkingHead
 
-The digital mentor renderer vendors source from TalkingHead by Mika Suominen,
-licensed under the MIT License. The original license is retained at
-`vendor/talkinghead/LICENSE`.
+The repository vendors source from TalkingHead by Mika Suominen for the backup
+3D avatar path, licensed under the MIT License. The original license is
+retained at `vendor/talkinghead/LICENSE`.
 
 ## Sample avatar
 

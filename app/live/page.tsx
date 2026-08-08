@@ -630,7 +630,7 @@ export default function LiveClassroom() {
             </div>
             <div>
               <span>数字人</span>
-              <strong>{avatarReady ? "TalkingHead" : "载入中"}</strong>
+              <strong>{avatarReady ? "林老师素材" : "载入中"}</strong>
             </div>
             <div>
               <span>AEC</span>
