@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type CSSProperties } from "react";
 
 export type TalkingMentorHandle = {
@@ -144,13 +143,11 @@ export const TalkingMentor = forwardRef<TalkingMentorHandle, TalkingMentorProps>
         data-status={status}
         style={{ "--mentor-level": level.toFixed(2) } as CSSProperties & Record<"--mentor-level", string>}
       >
-        <Image
+        {/* eslint-disable-next-line @next/next/no-img-element -- vinext dev image optimizer cannot serve local public assets here. */}
+        <img
           className="talking-mentor-portrait"
           src="/digital-mentor-lin.jpg"
           alt="林老师"
-          width={1024}
-          height={1024}
-          priority
           onLoad={() => {
             setStatus("ready");
             onReadyChange?.(true);
