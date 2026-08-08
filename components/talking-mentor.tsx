@@ -93,7 +93,7 @@ export const TalkingMentor = forwardRef<TalkingMentorHandle, TalkingMentorProps>
         }
         await outputContext.resume();
         streamStartedRef.current = true;
-        nextPlaybackTimeRef.current = outputContext.currentTime + 0.04;
+        nextPlaybackTimeRef.current = outputContext.currentTime;
         return true;
       },
       beginUtterance() {
@@ -116,7 +116,7 @@ export const TalkingMentor = forwardRef<TalkingMentorHandle, TalkingMentorProps>
         source.buffer = audioBuffer;
         source.connect(outputContext.destination);
 
-        const startAt = Math.max(outputContext.currentTime + 0.02, nextPlaybackTimeRef.current);
+        const startAt = Math.max(outputContext.currentTime, nextPlaybackTimeRef.current);
         source.start(startAt);
         nextPlaybackTimeRef.current = startAt + audioBuffer.duration;
 

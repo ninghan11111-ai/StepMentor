@@ -82,22 +82,6 @@ function base64ToFloat32(value: string) {
   return new Float32Array(bytes.buffer);
 }
 
-function segmentCaption(text: string) {
-  const segmenter = new Intl.Segmenter(["zh-CN", "en"], { granularity: "word" });
-  const units: string[] = [];
-
-  for (const item of segmenter.segment(text)) {
-    const segment = item.segment;
-    if (/^[\s\p{P}]+$/u.test(segment) && units.length > 0) {
-      units[units.length - 1] += segment;
-    } else {
-      units.push(segment);
-    }
-  }
-
-  return units;
-}
-
 export default function LiveClassroom() {
   const [runtime, setRuntime] = useState<RuntimeStatus | null>(null);
   const [sessionState, setSessionState] = useState<SessionState>("offline");
@@ -129,12 +113,9 @@ export default function LiveClassroom() {
   const cameraEnabledRef = useRef(true);
   const nextPlaybackTimeRef = useRef(0);
   const playbackSourcesRef = useRef<AudioBufferSourceNode[]>([]);
-  const turnPlaybackStartedRef = useRef(false);
   const speakBufferRef = useRef("");
   const wasListeningRef = useRef(true);
-  const captionPendingRef = useRef<string[]>([]);
   const captionDisplayedRef = useRef("");
-  const captionTimersRef = useRef<number[]>([]);
   const avatarLevelTimerRef = useRef<number | null>(null);
 
   const handleAvatarReadyChange = useCallback((ready: boolean) => {
@@ -157,44 +138,6 @@ export default function LiveClassroom() {
     };
   }, []);
 
-  function clearCaptionTimers() {
-    captionTimersRef.current.forEach((timer) => window.clearTimeout(timer));
-    captionTimersRef.current = [];
-  }
-
-  function enqueueCaption(text: string) {
-    captionPendingRef.current.push(...segmentCaption(text));
-  }
-
-  function takeCaptionGroup() {
-    let group = "";
-    let visibleLength = 0;
-
-    while (captionPendingRef.current.length > 0) {
-      const unit = captionPendingRef.current.shift() ?? "";
-      group += unit;
-      visibleLength += unit.replace(/\s/gu, "").length;
-      if (visibleLength >= 3 || /[.!?。！？，,;]　*$/u.test(unit)) break;
-    }
-
-    return group;
-  }
-
-  function scheduleCaption(durationMs: number, startDelayMs: number) {
-    const slots = Math.max(1, Math.floor(durationMs / 320));
-    const interval = durationMs / slots;
-
-    for (let index = 0; index < slots; index += 1) {
-      const group = takeCaptionGroup();
-      if (!group) break;
-      const timer = window.setTimeout(() => {
-        captionDisplayedRef.current += group;
-        setLastReply(captionDisplayedRef.current.trim());
-      }, startDelayMs + index * interval);
-      captionTimersRef.current.push(timer);
-    }
-  }
-
   function stopAudioPlayback() {
     playbackSourcesRef.current.forEach((source) => {
       try {
@@ -210,7 +153,6 @@ export default function LiveClassroom() {
       outputContextRef.current = null;
     }
     nextPlaybackTimeRef.current = 0;
-    turnPlaybackStartedRef.current = false;
     if (avatarLevelTimerRef.current !== null) window.clearTimeout(avatarLevelTimerRef.current);
     avatarLevelTimerRef.current = null;
     talkingMentorRef.current?.beginUtterance();
@@ -230,7 +172,6 @@ export default function LiveClassroom() {
 
     if (talkingMentorRef.current?.streamAudio(samples)) {
       setAvatarLevel(level);
-      scheduleCaption(durationMs, 0);
       if (avatarLevelTimerRef.current !== null) window.clearTimeout(avatarLevelTimerRef.current);
       avatarLevelTimerRef.current = window.setTimeout(() => setAvatarLevel(0), durationMs + 80);
       return;
@@ -248,15 +189,10 @@ export default function LiveClassroom() {
     const source = outputContext.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(outputContext.destination);
-    // Buffer once at the start of an utterance. Adding the delay again after
-    // every underrun creates a repeating pause on slower local inference.
-    const initialDelay = turnPlaybackStartedRef.current ? 0 : 0.1;
-    const startAt = Math.max(outputContext.currentTime + initialDelay, nextPlaybackTimeRef.current);
+    const startAt = Math.max(outputContext.currentTime, nextPlaybackTimeRef.current);
     source.start(startAt);
-    turnPlaybackStartedRef.current = true;
     nextPlaybackTimeRef.current = startAt + audioBuffer.duration;
     playbackSourcesRef.current.push(source);
-    scheduleCaption(durationMs, Math.max(0, (startAt - outputContext.currentTime) * 1000));
 
     source.onended = () => {
       playbackSourcesRef.current = playbackSourcesRef.current.filter((item) => item !== source);
@@ -368,7 +304,6 @@ export default function LiveClassroom() {
       sessionReadyRef.current = true;
       speakBufferRef.current = "";
       wasListeningRef.current = true;
-      captionPendingRef.current = [];
       captionDisplayedRef.current = "";
       setSessionState("listening");
       return;
@@ -385,16 +320,14 @@ export default function LiveClassroom() {
       setSessionState(isListening ? "listening" : "speaking");
       if (!isListening && wasListeningRef.current) {
         speakBufferRef.current = "";
-        clearCaptionTimers();
-        captionPendingRef.current = [];
         captionDisplayedRef.current = "";
-        turnPlaybackStartedRef.current = false;
         nextPlaybackTimeRef.current = 0;
         talkingMentorRef.current?.beginUtterance();
       }
       if (message.text) {
         speakBufferRef.current += message.text;
-        enqueueCaption(message.text);
+        captionDisplayedRef.current += message.text;
+        setLastReply(captionDisplayedRef.current.trim());
       }
       wasListeningRef.current = isListening;
       if (message.audio_data) playAudioChunk(message.audio_data);
@@ -459,7 +392,7 @@ export default function LiveClassroom() {
           deferred_finalize: true,
           config: {
             generate_audio: true,
-            chunk_ms: 1000,
+            chunk_ms: 500,
             sample_rate: 16000,
             force_listen_count: 0,
             max_new_speak_tokens_per_chunk: 24,
@@ -513,7 +446,6 @@ export default function LiveClassroom() {
     void inputContextRef.current?.close();
     inputContextRef.current = null;
     talkingMentorRef.current?.stopStream();
-    clearCaptionTimers();
     stopAudioPlayback();
     setPaused(false);
     pausedRef.current = false;
