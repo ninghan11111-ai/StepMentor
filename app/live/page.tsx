@@ -16,6 +16,7 @@ import {
   Volume2,
 } from "lucide-react";
 import Link from "next/link";
+import type { CSSProperties } from "react";
 import { useEffect, useRef, useState } from "react";
 
 type SessionState =
@@ -88,6 +89,7 @@ export default function LiveClassroom() {
   const [lastReply, setLastReply] = useState("先说说你准备从哪一步开始，我会根据你的思路继续追问。");
   const [errorText, setErrorText] = useState("");
   const [kvTokens, setKvTokens] = useState(0);
+  const [avatarLevel, setAvatarLevel] = useState(0);
 
   const wsRef = useRef<WebSocket | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -99,8 +101,10 @@ export default function LiveClassroom() {
   const pausedRef = useRef(false);
   const forceListenRef = useRef(false);
   const nextPlaybackTimeRef = useRef(0);
+  const playbackSourcesRef = useRef<AudioBufferSourceNode[]>([]);
   const speakBufferRef = useRef("");
   const wasListeningRef = useRef(true);
+  const visibleReplyStartedRef = useRef(false);
 
   useEffect(() => {
     fetch("/api/runtime", { cache: "no-store" })
@@ -119,14 +123,24 @@ export default function LiveClassroom() {
   }, []);
 
   function stopAudioPlayback() {
+    playbackSourcesRef.current.forEach((source) => {
+      try {
+        source.stop();
+      } catch {
+        // Source may have already ended.
+      }
+      source.disconnect();
+    });
+    playbackSourcesRef.current = [];
     if (outputContextRef.current) {
       void outputContextRef.current.close();
       outputContextRef.current = null;
     }
     nextPlaybackTimeRef.current = 0;
+    setAvatarLevel(0);
   }
 
-  function playAudioChunk(audioBase64: string) {
+  function playAudioChunk(audioBase64: string, textSnapshot = "") {
     let outputContext = outputContextRef.current;
     if (!outputContext || outputContext.state === "closed") {
       outputContext = new AudioContext();
@@ -135,15 +149,37 @@ export default function LiveClassroom() {
 
     const samples = base64ToFloat32(audioBase64);
     if (samples.length === 0) return;
+
+    let sumSquares = 0;
+    for (let index = 0; index < samples.length; index += 1) {
+      sumSquares += samples[index] * samples[index];
+    }
+    const level = Math.min(1, Math.max(0.16, Math.sqrt(sumSquares / samples.length) * 9));
+
     const audioBuffer = outputContext.createBuffer(1, samples.length, 24000);
     audioBuffer.copyToChannel(samples, 0);
 
     const source = outputContext.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(outputContext.destination);
-    const startAt = Math.max(outputContext.currentTime + 0.04, nextPlaybackTimeRef.current);
+    const initialDelay = nextPlaybackTimeRef.current > outputContext.currentTime ? 0.04 : 0.18;
+    const startAt = Math.max(outputContext.currentTime + initialDelay, nextPlaybackTimeRef.current);
     source.start(startAt);
     nextPlaybackTimeRef.current = startAt + audioBuffer.duration;
+    playbackSourcesRef.current.push(source);
+
+    source.onended = () => {
+      playbackSourcesRef.current = playbackSourcesRef.current.filter((item) => item !== source);
+      if (playbackSourcesRef.current.length === 0) setAvatarLevel(0);
+    };
+
+    window.setTimeout(() => {
+      setAvatarLevel(level);
+      if (textSnapshot && !visibleReplyStartedRef.current) {
+        visibleReplyStartedRef.current = true;
+        setLastReply(textSnapshot.trim());
+      }
+    }, Math.max(0, (startAt - outputContext.currentTime) * 1000));
   }
 
   async function prepareMicrophone() {
@@ -207,26 +243,31 @@ export default function LiveClassroom() {
       sessionReadyRef.current = true;
       speakBufferRef.current = "";
       wasListeningRef.current = true;
+      visibleReplyStartedRef.current = false;
       setSessionState("listening");
       return;
     }
 
     if (message.type === "audio_only" && message.audio_data) {
       setSessionState("speaking");
-      playAudioChunk(message.audio_data);
+      playAudioChunk(message.audio_data, speakBufferRef.current);
       return;
     }
 
     if (message.type === "result") {
       const isListening = message.is_listen ?? true;
       setSessionState(isListening ? "listening" : "speaking");
-      if (!isListening && wasListeningRef.current) speakBufferRef.current = "";
+      if (!isListening && wasListeningRef.current) {
+        speakBufferRef.current = "";
+        visibleReplyStartedRef.current = false;
+      }
       if (message.text) {
         speakBufferRef.current += message.text;
-        setLastReply(speakBufferRef.current.trim());
+        if (visibleReplyStartedRef.current) setLastReply(speakBufferRef.current.trim());
       }
       wasListeningRef.current = isListening;
-      if (message.audio_data) playAudioChunk(message.audio_data);
+      if (message.audio_data) playAudioChunk(message.audio_data, speakBufferRef.current);
+      if (isListening) setAvatarLevel(0);
       if (message.kv_cache_length) setKvTokens(message.kv_cache_length);
       return;
     }
@@ -282,9 +323,9 @@ export default function LiveClassroom() {
             generate_audio: true,
             chunk_ms: 1000,
             sample_rate: 16000,
-            force_listen_count: 3,
-            max_new_speak_tokens_per_chunk: 20,
-            length_penalty: 1.05,
+            force_listen_count: 2,
+            max_new_speak_tokens_per_chunk: 48,
+            length_penalty: 1,
           },
         }));
       };
@@ -380,11 +421,18 @@ export default function LiveClassroom() {
       </header>
 
       <section className="live-workspace">
-        <div className={`mentor-stage ${sessionState === "speaking" ? "is-speaking" : ""}`}>
+        <div
+          className={`mentor-stage ${sessionState === "speaking" ? "is-speaking" : ""}`}
+          style={{ "--avatar-level": avatarLevel.toFixed(2) } as CSSProperties & Record<"--avatar-level", string>}
+        >
           <img
             src="/digital-mentor-lin.jpg"
             alt="StepMentor 数字教师林老师"
           />
+          <div className="mentor-face-overlay" aria-hidden="true">
+            <span />
+            <span />
+          </div>
           <div className="mentor-stage-shade" />
           <div className="mentor-status">
             <div className="mentor-identity">

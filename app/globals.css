@@ -1132,8 +1132,46 @@ h2 {
 }
 
 .mentor-stage.is-speaking > img {
-  transform: scale(1.008);
-  filter: saturate(1.03) brightness(1.015);
+  transform: scale(calc(1.004 + var(--avatar-level, 0) * 0.012));
+  filter: saturate(calc(1.02 + var(--avatar-level, 0) * 0.05)) brightness(calc(1.01 + var(--avatar-level, 0) * 0.025));
+}
+
+.mentor-face-overlay {
+  position: absolute;
+  left: 50%;
+  top: 48%;
+  width: clamp(72px, 7vw, 112px);
+  height: clamp(44px, 4.4vw, 70px);
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.mentor-stage.is-speaking .mentor-face-overlay {
+  opacity: calc(0.32 + var(--avatar-level, 0) * 0.42);
+  transform: translate(-50%, calc(-50% + var(--avatar-level, 0) * 5px));
+}
+
+.mentor-face-overlay span:first-child {
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  width: calc(24px + var(--avatar-level, 0) * 22px);
+  height: calc(6px + var(--avatar-level, 0) * 12px);
+  border-radius: 999px;
+  background: rgba(34, 18, 18, 0.76);
+  box-shadow: 0 0 14px rgba(255, 236, 214, 0.34);
+  transform: translateX(-50%);
+}
+
+.mentor-face-overlay span:last-child {
+  position: absolute;
+  inset: auto 0 0;
+  height: calc(18px + var(--avatar-level, 0) * 16px);
+  border-radius: 50%;
+  border-bottom: 2px solid rgba(255, 246, 230, 0.55);
+  filter: blur(0.2px);
 }
 
 .mentor-stage-shade {
@@ -1192,6 +1230,7 @@ h2 {
 
 .is-speaking .voice-indicator span {
   animation: voice-level 720ms ease-in-out infinite alternate;
+  height: calc(7px + var(--avatar-level, 0) * 15px);
   opacity: 1;
 }
 
