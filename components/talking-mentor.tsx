@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type CSSProperties } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type CSSProperties } from "react";
 
 export type TalkingMentorHandle = {
   beginUtterance: () => void;
@@ -35,10 +35,21 @@ export const TalkingMentor = forwardRef<TalkingMentorHandle, TalkingMentorProps>
     const sourcesRef = useRef<PlaybackSource[]>([]);
     const timersRef = useRef<number[]>([]);
     const streamStartedRef = useRef(false);
+    const portraitRef = useRef<HTMLImageElement | null>(null);
     const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
     const [level, setLevel] = useState(0);
 
+    const markReady = useCallback(() => {
+      setStatus("ready");
+      onReadyChange?.(true);
+    }, [onReadyChange]);
+
     useEffect(() => {
+      const portrait = portraitRef.current;
+      if (portrait?.complete && portrait.naturalWidth > 0) {
+        markReady();
+      }
+
       return () => {
         onReadyChange?.(false);
         timersRef.current.forEach((timer) => window.clearTimeout(timer));
@@ -54,7 +65,7 @@ export const TalkingMentor = forwardRef<TalkingMentorHandle, TalkingMentorProps>
         sourcesRef.current = [];
         if (outputContextRef.current) void outputContextRef.current.close();
       };
-    }, [onReadyChange]);
+    }, [markReady, onReadyChange]);
 
     function resetPlayback() {
       timersRef.current.forEach((timer) => window.clearTimeout(timer));
@@ -145,13 +156,11 @@ export const TalkingMentor = forwardRef<TalkingMentorHandle, TalkingMentorProps>
       >
         {/* eslint-disable-next-line @next/next/no-img-element -- vinext dev image optimizer cannot serve local public assets here. */}
         <img
+          ref={portraitRef}
           className="talking-mentor-portrait"
           src="/digital-mentor-lin.jpg"
           alt="林老师"
-          onLoad={() => {
-            setStatus("ready");
-            onReadyChange?.(true);
-          }}
+          onLoad={markReady}
           onError={() => {
             setStatus("error");
             onReadyChange?.(false);
