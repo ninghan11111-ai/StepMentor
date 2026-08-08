@@ -1,7 +1,5 @@
 "use client";
 
-/* eslint-disable @next/next/no-img-element */
-
 import {
   ArrowLeft,
   Ear,
@@ -13,11 +11,15 @@ import {
   PhoneOff,
   Play,
   Radio,
+  Video,
+  VideoOff,
   Volume2,
 } from "lucide-react";
 import Link from "next/link";
 import type { CSSProperties } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+
+import { TalkingMentor, type TalkingMentorHandle } from "@/components/talking-mentor";
 
 type SessionState =
   | "offline"
@@ -59,7 +61,7 @@ const stateCopy: Record<SessionState, string> = {
 const teacherPrompt = `你是 StepMentor 的林老师，一名高中数学苏格拉底学习教练。
 你需要用自然、简短的中文与学生实时交流。不要直接公布完整答案，先判断学生卡点，再提出一个具体问题，引导学生说出下一步。
 说话时优先输出完整短句，不要把一句话拆成零碎词组。学生没有说清思路时，用一个方向提示；学生答对时，指出具体正确证据并继续追问。每次只说一到两个短句。
-始终使用中文回答。所有数字、序号和算式都要按中文自然口语读出，数字用汉字表达，不要夹杂英文读法。`;
+语言要跟随学生和教学内容自然切换。中文讲解时，数字、序号和算式按中文自然口语读出；英语学习、英文术语或学生要求英文时，使用自然英语，不要为了避免英文而生硬翻译。`;
 
 function arrayBufferToBase64(buffer: ArrayBufferLike) {
   const bytes = new Uint8Array(buffer);
@@ -80,12 +82,32 @@ function base64ToFloat32(value: string) {
   return new Float32Array(bytes.buffer);
 }
 
+function segmentCaption(text: string) {
+  const segmenter = new Intl.Segmenter(["zh-CN", "en"], { granularity: "word" });
+  const units: string[] = [];
+
+  for (const item of segmenter.segment(text)) {
+    const segment = item.segment;
+    if (/^[\s\p{P}]+$/u.test(segment) && units.length > 0) {
+      units[units.length - 1] += segment;
+    } else {
+      units.push(segment);
+    }
+  }
+
+  return units;
+}
+
 export default function LiveClassroom() {
   const [runtime, setRuntime] = useState<RuntimeStatus | null>(null);
   const [sessionState, setSessionState] = useState<SessionState>("offline");
   const [muted, setMuted] = useState(false);
   const [paused, setPaused] = useState(false);
   const [forceListen, setForceListen] = useState(false);
+  const [cameraEnabled, setCameraEnabled] = useState(true);
+  const [cameraAvailable, setCameraAvailable] = useState(false);
+  const [avatarReady, setAvatarReady] = useState(false);
+  const [aecActive, setAecActive] = useState<boolean | null>(null);
   const [queueText, setQueueText] = useState("");
   const [lastReply, setLastReply] = useState("先说说你准备从哪一步开始，我会根据你的思路继续追问。");
   const [errorText, setErrorText] = useState("");
@@ -97,16 +119,27 @@ export default function LiveClassroom() {
   const inputContextRef = useRef<AudioContext | null>(null);
   const outputContextRef = useRef<AudioContext | null>(null);
   const captureNodeRef = useRef<AudioWorkletNode | null>(null);
+  const videoPreviewRef = useRef<HTMLVideoElement | null>(null);
+  const frameCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const talkingMentorRef = useRef<TalkingMentorHandle | null>(null);
   const sessionReadyRef = useRef(false);
   const mutedRef = useRef(false);
   const pausedRef = useRef(false);
   const forceListenRef = useRef(false);
+  const cameraEnabledRef = useRef(true);
   const nextPlaybackTimeRef = useRef(0);
   const playbackSourcesRef = useRef<AudioBufferSourceNode[]>([]);
   const turnPlaybackStartedRef = useRef(false);
   const speakBufferRef = useRef("");
   const wasListeningRef = useRef(true);
-  const visibleReplyStartedRef = useRef(false);
+  const captionPendingRef = useRef<string[]>([]);
+  const captionDisplayedRef = useRef("");
+  const captionTimersRef = useRef<number[]>([]);
+  const avatarLevelTimerRef = useRef<number | null>(null);
+
+  const handleAvatarReadyChange = useCallback((ready: boolean) => {
+    setAvatarReady(ready);
+  }, []);
 
   useEffect(() => {
     fetch("/api/runtime", { cache: "no-store" })
@@ -124,6 +157,44 @@ export default function LiveClassroom() {
     };
   }, []);
 
+  function clearCaptionTimers() {
+    captionTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    captionTimersRef.current = [];
+  }
+
+  function enqueueCaption(text: string) {
+    captionPendingRef.current.push(...segmentCaption(text));
+  }
+
+  function takeCaptionGroup() {
+    let group = "";
+    let visibleLength = 0;
+
+    while (captionPendingRef.current.length > 0) {
+      const unit = captionPendingRef.current.shift() ?? "";
+      group += unit;
+      visibleLength += unit.replace(/\s/gu, "").length;
+      if (visibleLength >= 3 || /[.!?。！？，,;]　*$/u.test(unit)) break;
+    }
+
+    return group;
+  }
+
+  function scheduleCaption(durationMs: number, startDelayMs: number) {
+    const slots = Math.max(1, Math.floor(durationMs / 320));
+    const interval = durationMs / slots;
+
+    for (let index = 0; index < slots; index += 1) {
+      const group = takeCaptionGroup();
+      if (!group) break;
+      const timer = window.setTimeout(() => {
+        captionDisplayedRef.current += group;
+        setLastReply(captionDisplayedRef.current.trim());
+      }, startDelayMs + index * interval);
+      captionTimersRef.current.push(timer);
+    }
+  }
+
   function stopAudioPlayback() {
     playbackSourcesRef.current.forEach((source) => {
       try {
@@ -140,16 +211,13 @@ export default function LiveClassroom() {
     }
     nextPlaybackTimeRef.current = 0;
     turnPlaybackStartedRef.current = false;
+    if (avatarLevelTimerRef.current !== null) window.clearTimeout(avatarLevelTimerRef.current);
+    avatarLevelTimerRef.current = null;
+    talkingMentorRef.current?.beginUtterance();
     setAvatarLevel(0);
   }
 
-  function playAudioChunk(audioBase64: string, textSnapshot = "") {
-    let outputContext = outputContextRef.current;
-    if (!outputContext || outputContext.state === "closed") {
-      outputContext = new AudioContext();
-      outputContextRef.current = outputContext;
-    }
-
+  function playAudioChunk(audioBase64: string) {
     const samples = base64ToFloat32(audioBase64);
     if (samples.length === 0) return;
 
@@ -158,6 +226,21 @@ export default function LiveClassroom() {
       sumSquares += samples[index] * samples[index];
     }
     const level = Math.min(1, Math.max(0.16, Math.sqrt(sumSquares / samples.length) * 9));
+    const durationMs = (samples.length / 24000) * 1000;
+
+    if (talkingMentorRef.current?.streamAudio(samples)) {
+      setAvatarLevel(level);
+      scheduleCaption(durationMs, 0);
+      if (avatarLevelTimerRef.current !== null) window.clearTimeout(avatarLevelTimerRef.current);
+      avatarLevelTimerRef.current = window.setTimeout(() => setAvatarLevel(0), durationMs + 80);
+      return;
+    }
+
+    let outputContext = outputContextRef.current;
+    if (!outputContext || outputContext.state === "closed") {
+      outputContext = new AudioContext();
+      outputContextRef.current = outputContext;
+    }
 
     const audioBuffer = outputContext.createBuffer(1, samples.length, 24000);
     audioBuffer.copyToChannel(samples, 0);
@@ -167,12 +250,13 @@ export default function LiveClassroom() {
     source.connect(outputContext.destination);
     // Buffer once at the start of an utterance. Adding the delay again after
     // every underrun creates a repeating pause on slower local inference.
-    const initialDelay = turnPlaybackStartedRef.current ? 0 : 0.22;
+    const initialDelay = turnPlaybackStartedRef.current ? 0 : 0.1;
     const startAt = Math.max(outputContext.currentTime + initialDelay, nextPlaybackTimeRef.current);
     source.start(startAt);
     turnPlaybackStartedRef.current = true;
     nextPlaybackTimeRef.current = startAt + audioBuffer.duration;
     playbackSourcesRef.current.push(source);
+    scheduleCaption(durationMs, Math.max(0, (startAt - outputContext.currentTime) * 1000));
 
     source.onended = () => {
       playbackSourcesRef.current = playbackSourcesRef.current.filter((item) => item !== source);
@@ -181,24 +265,41 @@ export default function LiveClassroom() {
 
     window.setTimeout(() => {
       setAvatarLevel(level);
-      if (textSnapshot && !visibleReplyStartedRef.current) {
-        visibleReplyStartedRef.current = true;
-        setLastReply(textSnapshot.trim());
-      }
     }, Math.max(0, (startAt - outputContext.currentTime) * 1000));
   }
 
   async function prepareMicrophone() {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-      video: false,
-    });
+    const audio = {
+      channelCount: 1,
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    };
+    let stream: MediaStream;
+
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio,
+        video: {
+          facingMode: "user",
+          width: { ideal: 640 },
+          height: { ideal: 360 },
+        },
+      });
+    } catch {
+      stream = await navigator.mediaDevices.getUserMedia({ audio, video: false });
+    }
+
     mediaStreamRef.current = stream;
+    setAecActive(stream.getAudioTracks()[0]?.getSettings().echoCancellation ?? null);
+    const hasCamera = stream.getVideoTracks().length > 0;
+    setCameraAvailable(hasCamera);
+    cameraEnabledRef.current = hasCamera && cameraEnabled;
+
+    if (videoPreviewRef.current && hasCamera) {
+      videoPreviewRef.current.srcObject = stream;
+      await videoPreviewRef.current.play();
+    }
 
     const context = new AudioContext({ sampleRate: 16000 });
     inputContextRef.current = context;
@@ -224,12 +325,30 @@ export default function LiveClassroom() {
 
       const sourceAudio = event.data.audio;
       const audio = mutedRef.current ? new Float32Array(sourceAudio.length) : sourceAudio;
-      ws.send(JSON.stringify({
+      const message: Record<string, unknown> = {
         type: "audio_chunk",
         audio_base64: arrayBufferToBase64(audio.buffer),
         ...(forceListenRef.current ? { force_listen: true } : {}),
-      }));
+      };
+      const frame = captureLearningFrame();
+      if (frame) message.frame_base64_list = [frame];
+      ws.send(JSON.stringify(message));
     };
+  }
+
+  function captureLearningFrame() {
+    const video = videoPreviewRef.current;
+    const canvas = frameCanvasRef.current;
+    if (!cameraEnabledRef.current || !video || !canvas || !video.videoWidth || !video.videoHeight) return null;
+
+    const width = Math.min(512, video.videoWidth);
+    const height = Math.round(width * (video.videoHeight / video.videoWidth));
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) return null;
+    context.drawImage(video, 0, 0, width, height);
+    return canvas.toDataURL("image/jpeg", 0.64).split(",")[1] ?? null;
   }
 
   function handleServerMessage(message: ServerMessage) {
@@ -249,14 +368,15 @@ export default function LiveClassroom() {
       sessionReadyRef.current = true;
       speakBufferRef.current = "";
       wasListeningRef.current = true;
-      visibleReplyStartedRef.current = false;
+      captionPendingRef.current = [];
+      captionDisplayedRef.current = "";
       setSessionState("listening");
       return;
     }
 
     if (message.type === "audio_only" && message.audio_data) {
       setSessionState("speaking");
-      playAudioChunk(message.audio_data, speakBufferRef.current);
+      playAudioChunk(message.audio_data);
       return;
     }
 
@@ -265,16 +385,19 @@ export default function LiveClassroom() {
       setSessionState(isListening ? "listening" : "speaking");
       if (!isListening && wasListeningRef.current) {
         speakBufferRef.current = "";
-        visibleReplyStartedRef.current = false;
+        clearCaptionTimers();
+        captionPendingRef.current = [];
+        captionDisplayedRef.current = "";
         turnPlaybackStartedRef.current = false;
         nextPlaybackTimeRef.current = 0;
+        talkingMentorRef.current?.beginUtterance();
       }
       if (message.text) {
         speakBufferRef.current += message.text;
-        if (visibleReplyStartedRef.current) setLastReply(speakBufferRef.current.trim());
+        enqueueCaption(message.text);
       }
       wasListeningRef.current = isListening;
-      if (message.audio_data) playAudioChunk(message.audio_data, speakBufferRef.current);
+      if (message.audio_data) playAudioChunk(message.audio_data);
       if (isListening) {
         setAvatarLevel(0);
       }
@@ -311,9 +434,12 @@ export default function LiveClassroom() {
 
     try {
       await prepareMicrophone();
-      const outputContext = new AudioContext();
-      await outputContext.resume();
-      outputContextRef.current = outputContext;
+      const avatarStreaming = await talkingMentorRef.current?.startStream();
+      if (!avatarStreaming) {
+        const outputContext = new AudioContext();
+        await outputContext.resume();
+        outputContextRef.current = outputContext;
+      }
 
       const gateway = new URL(runtime.gatewayUrl);
       const wsProtocol = gateway.protocol === "https:" ? "wss:" : "ws:";
@@ -329,6 +455,8 @@ export default function LiveClassroom() {
         ws.send(JSON.stringify({
           type: "prepare",
           system_prompt: teacherPrompt,
+          max_slice_nums: 1,
+          deferred_finalize: true,
           config: {
             generate_audio: true,
             chunk_ms: 1000,
@@ -379,8 +507,13 @@ export default function LiveClassroom() {
     mediaStreamRef.current = null;
     captureNodeRef.current?.disconnect();
     captureNodeRef.current = null;
+    if (videoPreviewRef.current) videoPreviewRef.current.srcObject = null;
+    setCameraAvailable(false);
+    setAecActive(null);
     void inputContextRef.current?.close();
     inputContextRef.current = null;
+    talkingMentorRef.current?.stopStream();
+    clearCaptionTimers();
     stopAudioPlayback();
     setPaused(false);
     pausedRef.current = false;
@@ -411,6 +544,15 @@ export default function LiveClassroom() {
     if (next) stopAudioPlayback();
   }
 
+  function toggleCamera() {
+    const next = !cameraEnabled;
+    setCameraEnabled(next);
+    cameraEnabledRef.current = next;
+    mediaStreamRef.current?.getVideoTracks().forEach((track) => {
+      track.enabled = next;
+    });
+  }
+
   const sessionActive = ["connecting", "preparing", "listening", "speaking", "paused"].includes(sessionState);
 
   return (
@@ -435,14 +577,7 @@ export default function LiveClassroom() {
           className={`mentor-stage ${sessionState === "speaking" ? "is-speaking" : ""}`}
           style={{ "--avatar-level": avatarLevel.toFixed(2) } as CSSProperties & Record<"--avatar-level", string>}
         >
-          <img
-            src="/digital-mentor-lin.jpg"
-            alt="StepMentor 数字教师林老师"
-          />
-          <div className="mentor-face-overlay" aria-hidden="true">
-            <span />
-            <span />
-          </div>
+          <TalkingMentor ref={talkingMentorRef} onReadyChange={handleAvatarReadyChange} />
           <div className="mentor-stage-shade" />
           <div className="mentor-status">
             <div className="mentor-identity">
@@ -455,6 +590,11 @@ export default function LiveClassroom() {
               <span />
               <span />
             </div>
+          </div>
+          <div className={`learning-camera ${cameraEnabled && cameraAvailable ? "is-live" : ""}`}>
+            <video ref={videoPreviewRef} muted playsInline aria-label="学习场景实时画面" />
+            <canvas ref={frameCanvasRef} aria-hidden="true" />
+            <span>{cameraEnabled && cameraAvailable ? "场景理解 · 1 FPS" : "摄像头未开启"}</span>
           </div>
           <div className="mentor-caption" aria-live="polite">
             <span>{stateCopy[sessionState]}</span>
@@ -488,6 +628,14 @@ export default function LiveClassroom() {
               <span>上下文</span>
               <strong>{kvTokens > 0 ? kvTokens.toLocaleString() : "4,096"}</strong>
             </div>
+            <div>
+              <span>数字人</span>
+              <strong>{avatarReady ? "TalkingHead" : "载入中"}</strong>
+            </div>
+            <div>
+              <span>AEC</span>
+              <strong>{aecActive === null ? "待检测" : aecActive ? "已启用" : "未启用"}</strong>
+            </div>
           </div>
 
           <div className="live-controls">
@@ -503,6 +651,10 @@ export default function LiveClassroom() {
               <Ear size={19} />
               <span>只听</span>
             </button>
+            <button type="button" className={cameraEnabled ? "is-active" : ""} onClick={toggleCamera} disabled={!cameraAvailable} title={cameraEnabled ? "关闭学习场景摄像头" : "开启学习场景摄像头"}>
+              {cameraEnabled ? <Video size={19} /> : <VideoOff size={19} />}
+              <span>{cameraEnabled ? "场景开启" : "场景关闭"}</span>
+            </button>
           </div>
 
           {sessionActive ? (
@@ -511,9 +663,9 @@ export default function LiveClassroom() {
               结束对话
             </button>
           ) : (
-            <button className="call-button" type="button" onClick={startSession} disabled={!runtime?.online}>
+            <button className="call-button" type="button" onClick={startSession} disabled={!runtime?.online || !avatarReady}>
               <Phone size={20} />
-              开始实时对话
+              {avatarReady ? "开始实时对话" : "正在载入数字人"}
             </button>
           )}
 

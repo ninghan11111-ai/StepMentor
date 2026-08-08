@@ -14,7 +14,10 @@
 - OpenAI-compatible MiniCPM-o 服务接入位
 - 本地 MiniCPM-o 4.5 C++/Metal 部署脚本
 - 实时双工 Gateway 健康检查接口
-- 音频驱动数字教师实时课堂页
+- TalkingHead 3D 数字教师与流式 viseme 唇形
+- 学习场景摄像头预览与 1 FPS MiniCPM-o Omni 视频帧输入
+- 按音频进度、中英文词边界同步的字幕
+- 浏览器 AEC、降噪与自动增益请求及实际状态展示
 
 ## 本地运行
 
@@ -71,7 +74,10 @@ app/page.tsx             交互式学习工作台
 app/api/coach/route.ts   MiniCPM-o 适配与演示回退
 app/api/runtime/route.ts 本地实时 Gateway 健康检查
 app/live/page.tsx        数字教师双工语音课堂
+components/talking-mentor.tsx TalkingHead 流式 PCM 与唇形适配
 app/globals.css          响应式界面样式
+vendor/talkinghead/      TalkingHead MIT 渲染与播放模块
+public/avatars/          数字人 GLB 素材
 public/og.png            项目分享预览图
 scripts/                 本地 MiniCPM-o 启停与检查脚本
 tests/                   构建产物渲染检查
@@ -84,4 +90,4 @@ npm run build
 npm test
 ```
 
-下一阶段将接入连续视频帧理解、可打断语音对话、手写草稿步骤识别和持久化错题本。
+下一阶段将增加手写草稿步骤识别、流式性能指标和持久化错题本。
