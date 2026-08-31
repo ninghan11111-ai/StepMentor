@@ -1,40 +1,110 @@
 # StepMentor
 
-基于 MiniCPM-o 4.5 的多模态苏格拉底学习教练。它不是直接给答案的拍题工具，而是观察题目、学生语音和解题步骤，判断卡点并用分级提示推动学生自己完成推导。
+StepMentor 是一个面向高中数学学习场景的苏格拉底式 AI 教练 Demo。项目基于
+MiniCPM-o 4.5，目标不是直接公布答案，而是结合题目、学生当前步骤和实时语音，
+每次只指出一个可观察到的卡点，再提出一个推动学生继续思考的问题。
 
-## 已完成的 MVP
+> 当前仓库是竞赛演示版本，不是已经完成的教学产品。无需模型即可体验固定题目的
+> 确定性流程；真实图像理解和实时全双工对话需要另行启动 MiniCPM-o 服务。
 
-- 拍摄或上传题目图片
-- 语音或文字表达解题思路
-- 连续对话式苏格拉底追问
-- 三级提示，按卡点逐步释放信息
-- 理解度、当前卡点和过程证据诊断
-- 自动生成方法总结、易错点和相似练习
-- 无模型服务时可运行的确定性演示模式
-- OpenAI-compatible MiniCPM-o 服务接入位
-- 本地 MiniCPM-o 4.5 C++/Metal 部署脚本
-- 实时双工 Gateway 健康检查接口
-- 林老师固定形象数字教师与音频驱动的面部/嘴部微动
-- 学习场景摄像头预览与 1 FPS MiniCPM-o Omni 视频帧输入
-- 按音频进度、中英文词边界同步的字幕
-- 浏览器 AEC、降噪与自动增益请求及实际状态展示
-- 云端 MiniCPM-o Gateway 接入标签、实时 LLM/TTS/视觉指标展示
-- 3 分钟无明显学生语音输入时触发高优先级视觉卡点检查
+## 当前功能状态
 
-## 本地运行
+| 功能 | 当前状态 | 说明 |
+| --- | --- | --- |
+| 分阶段苏格拉底追问 | 可用 | `/` 页面支持文字回答、快捷回答和三级提示；无模型时使用固定演示流程 |
+| MiniCPM-o 单轮教练 | 可接入 | `/api/coach` 调用 OpenAI-compatible `/v1/chat/completions`，失败时自动回退演示模式 |
+| 上传或拍摄题目 | 前端可用 | 图片以 data URL 传给已配置的多模态模型；演示模式不会真正识别图片 |
+| 普通语音输入与朗读 | 浏览器能力 | 首页使用 Web Speech API 单次听写和 Speech Synthesis，不属于全双工 |
+| 实时全双工课堂 | 需要 Gateway | `/live` 持续发送麦克风音频，接收 MiniCPM-o 流式文字与语音，并支持暂停、静音和只听模式 |
+| 学习场景视频 | 实验性 | 双工会话可附带低分辨率摄像头帧；是否被模型正确理解取决于 Comni/模型运行时 |
+| 数字教师 | 可用 | 使用林老师固定形象，根据返回音频能量驱动轻量面部和嘴部动画，不是 3D 数字人 |
+| 学习状态与学习卡 | 演示数据 | 当前由对话阶段驱动，用于展示交互结构，不代表经过模型验证的理解度评估 |
+| 3 分钟卡点检查 | 实验性 | 根据麦克风音量判断长时间无明显语音，并发送静音音频和当前画面；尚不是可靠的步骤变化识别 |
+| OCR、手写识别、错题本 | 未实现 | 当前仓库不包含 PaddleOCR，也没有持久化学习记录 |
+
+当前没有可公开免登录、同时连接 MiniCPM-o 推理服务的在线 Demo。托管页面只能展示
+前端和固定演示流程；`/live` 必须能够访问单独部署的 Comni Gateway。
+
+## 页面与运行模式
+
+### 1. 学习工作台 `/`
+
+- 默认题目是 `y=x²-4x+3` 的固定演示题。
+- 学生可输入文字、使用浏览器单次语音听写，或选择快捷回答。
+- 教练按阶段追问，并可朗读回复。
+- 上传和拍摄的图片只在配置了兼容多模态接口时参与模型请求。
+- 右侧理解度、卡点和学习卡是演示状态，不应作为真实测评结果使用。
+
+### 2. 实时课堂 `/live`
+
+- 浏览器以 16 kHz、float32、单声道、500 ms chunk 发送麦克风音频。
+- 页面连接 `{MINICPM_REALTIME_URL}/ws/duplex/{session_id}`。
+- Gateway 返回流式文字、24 kHz 音频及推理指标，页面负责连续播放和字幕展示。
+- 摄像头开启时，音频 chunk 可附带压缩后的学习场景画面。
+- 页面请求浏览器启用 AEC、降噪和自动增益；实际是否生效取决于设备和浏览器。
+
+## MiniCPM-o 4.5 的使用位置
+
+```text
+学习工作台
+Browser -> /api/coach -> OpenAI-compatible MiniCPM-o
+                         -> 失败时使用固定演示回复
+
+实时课堂
+Browser -> Comni Gateway -> Worker -> llama.cpp-omni -> MiniCPM-o 4.5
+        <- 流式文本与 TTS 音频 <-
+```
+
+项目使用或预留了 MiniCPM-o 4.5 的以下能力：
+
+- 文本理解：判断学生当前步骤并生成简短追问。
+- 图像输入：把上传图片或摄像头帧传给兼容的多模态接口。
+- 流式语音：在 Comni Gateway 上持续输入音频并接收模型语音。
+- 视觉与语音联合输入：实时课堂可以在音频消息中附带学习场景帧。
+- TTS：播放模型返回的流式语音，并驱动数字教师动画。
+
+## 快速运行
 
 环境要求：Node.js `>=22.13.0`。
 
 ```bash
+git clone https://github.com/ninghan11111-ai/StepMentor.git
+cd StepMentor
 npm install
 npm run dev
 ```
 
-访问终端显示的本地地址。无需模型服务即可走通完整演示流程。
+打开终端显示的本地地址即可体验固定演示流程。此模式不需要模型权重，也不会执行
+真实题目图片识别。
 
-### 启动本地 MiniCPM-o 4.5
+## 接入单轮 MiniCPM-o 服务
 
-本项目支持通过官方 Comni Gateway 连接本地 `llama.cpp-omni` Metal 后端：
+```bash
+cp .env.example .env.local
+```
+
+根据实际服务修改：
+
+```env
+MINICPM_BASE_URL=http://127.0.0.1:8000
+MINICPM_API_KEY=
+MINICPM_MODEL=MiniCPM-o-4_5
+```
+
+接口必须兼容：
+
+```text
+POST {MINICPM_BASE_URL}/v1/chat/completions
+```
+
+如果需要使用图片，该接口还必须接受 OpenAI-compatible `image_url` data URL。官方
+Comni 流式接口与该接口不是同一套协议，不能仅通过修改 URL 互相替代。
+
+## 启动实时全双工服务
+
+### Apple Silicon 本地开发
+
+默认使用 Q4_K_M 模型和 Metal 后端：
 
 ```bash
 npm run local:omni:setup
@@ -42,57 +112,62 @@ npm run local:omni:start
 npm run local:omni:check
 ```
 
-启动后从工作台进入 `/live` 使用数字教师实时课堂，或访问 `http://127.0.0.1:8040/audio_duplex` 打开官方诊断页。完整安装、目录约定和硬件边界见 [本地部署文档](docs/local-minicpm-o.md)。
+### 昇腾 910C 竞赛环境
 
-## 接入 MiniCPM-o 4.5
-
-复制环境变量模板并填写服务地址：
+需要 Linux、CANN、可用的 910C 设备和 F16 模型：
 
 ```bash
-cp .env.example .env.local
+npm run ascend:omni:setup
+npm run ascend:omni:start
+npm run local:omni:check
 ```
 
-后端通过 `POST {MINICPM_BASE_URL}/v1/chat/completions` 调用 OpenAI-compatible 服务，支持文本和 data URL 图片输入。配置完成后，页面右上角会从“演示模式”切换为“MiniCPM-o 在线”。
+然后配置 StepMentor：
 
-建议在昇腾正式环境中把推理服务独立部署，再将以下配置写入运行环境：
-
-- `MINICPM_BASE_URL`：模型服务根地址
-- `MINICPM_API_KEY`：可选鉴权令牌
-- `MINICPM_MODEL`：服务注册的模型名
-- `MINICPM_REALTIME_URL`：官方 Comni 实时语音 Gateway 地址
-- `MINICPM_REALTIME_LABEL`：页面展示的运行环境名称，例如 `Cloud Ascend MiniCPM-o 4.5`
-
-开发时接云端推荐先用 SSH 隧道：
-
-```bash
-ssh -N -L 8040:127.0.0.1:<gateway-port> <user>@<server-ip>
+```env
+MINICPM_REALTIME_URL=http://127.0.0.1:8040
+MINICPM_REALTIME_LABEL=Ascend 910C MiniCPM-o 4.5
 ```
 
-此时 `.env.local` 仍可使用 `MINICPM_REALTIME_URL=http://127.0.0.1:8040`，避免公网 HTTP/WSS 影响浏览器麦克风和摄像头权限。
+默认服务端口：
 
-## 演示流程
+| 服务 | 端口 |
+| --- | ---: |
+| Comni Gateway | `8040` |
+| Worker | `22440` |
+| llama-server | `19080` |
 
-1. 使用默认二次函数题，或拍摄一张新题目。
-2. 回答“先配方”，观察教练是否只给下一步追问。
-3. 使用语音说出“顶点是二，负一”。
-4. 故意点击“交点怎么判断”，展示卡点诊断和三级提示。
-5. 完成零点推导，生成学习卡与相似题。
+详细步骤见 [Apple Silicon 本地部署](docs/local-minicpm-o.md) 和
+[昇腾 910C 部署](docs/ascend-910c-minicpm-o.md)。
+
+远程浏览器访问麦克风、摄像头和 WebSocket 时需要安全上下文。开发阶段建议使用 SSH
+隧道；正式部署应提供 HTTPS/WSS，而不是直接暴露推理端口。
+
+## 环境变量
+
+| 变量 | 用途 | 必需 |
+| --- | --- | --- |
+| `MINICPM_BASE_URL` | 首页单轮教练的 OpenAI-compatible 服务地址 | 否 |
+| `MINICPM_API_KEY` | 单轮服务鉴权 | 否 |
+| `MINICPM_MODEL` | 单轮服务中的模型名 | 否 |
+| `MINICPM_REALTIME_URL` | `/live` 使用的 Comni Gateway 地址 | 使用双工时必需 |
+| `MINICPM_REALTIME_LABEL` | 页面显示的运行环境名称 | 否 |
 
 ## 工程结构
 
 ```text
-app/page.tsx             交互式学习工作台
-app/api/coach/route.ts   MiniCPM-o 适配与演示回退
-app/api/runtime/route.ts 本地实时 Gateway 健康检查
-app/live/page.tsx        数字教师双工语音课堂、云端 Gateway 客户端与实时指标
-components/talking-mentor.tsx 林老师固定素材、流式 PCM 播放与音频驱动微动
-app/globals.css          响应式界面样式
-vendor/talkinghead/      TalkingHead MIT 渲染与播放模块
-public/digital-mentor-lin.jpg 林老师固定形象素材
-public/avatars/          备用数字人 GLB 素材
-public/og.png            项目分享预览图
-scripts/                 本地 MiniCPM-o 启停与检查脚本
-tests/                   构建产物渲染检查
+app/page.tsx                       学习工作台与固定演示流程
+app/live/page.tsx                  MiniCPM-o 实时双工课堂
+app/api/coach/route.ts             单轮模型适配和确定性回退
+app/api/runtime/route.ts           Comni Gateway 健康检查
+components/talking-mentor.tsx      林老师形象、流式音频播放与动画
+public/capture-processor.js        浏览器音频采集 AudioWorklet
+scripts/setup-local-omni.sh        Apple Silicon 运行时安装
+scripts/start-local-omni.sh        本地 Gateway/Worker 启动
+scripts/setup-ascend-910c-omni.sh  昇腾 910C 模型下载与 CANN 编译
+scripts/start-ascend-910c-omni.sh  昇腾 910C 全双工服务启动
+docs/                              运行时部署说明
+tests/                             构建产物渲染测试
 ```
 
 ## 验证
@@ -100,6 +175,18 @@ tests/                   构建产物渲染检查
 ```bash
 npm run build
 npm test
+npm run lint
 ```
 
-下一阶段将增加手写草稿步骤识别、流式性能指标和持久化错题本。
+验收时应分别验证：固定演示、单轮模型调用、Gateway 健康状态、WebSocket 双工音频、
+摄像头权限和远程 HTTPS/WSS。页面显示“图片已载入”或“摄像头已开启”，只证明浏览器
+取得了输入，不等于模型已经正确理解题目。
+
+## 已知边界
+
+- 当前公开托管页需要平台访问权限，不能作为免登录竞赛体验地址。
+- 首页语音输入是浏览器单次听写；真正的持续双工只在 `/live` 中实现。
+- 首页固定题目的识别标签、掌握度和学习卡是 UI 演示数据。
+- MiniCPM-o 的视觉效果取决于服务协议、模型构建和运行环境，仓库没有 OCR 兜底。
+- 没有账户系统、数据库、课程管理、错题本或教学效果评估。
+- Apple Silicon Q4 环境只用于开发；昇腾验收应使用 910C、CANN 和 F16 模型。
