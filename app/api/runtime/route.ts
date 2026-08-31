@@ -4,12 +4,14 @@ const DEFAULT_TIMEOUT_MS = 2000;
 
 export async function GET() {
   const baseUrl = process.env.MINICPM_REALTIME_URL?.replace(/\/$/, "");
+  const runtimeLabel = process.env.MINICPM_REALTIME_LABEL || "MiniCPM-o 4.5 Gateway";
 
   if (!baseUrl) {
     return Response.json({
       configured: false,
       online: false,
       runtime: "demo",
+      runtimeLabel,
     });
   }
 
@@ -22,7 +24,8 @@ export async function GET() {
     return Response.json({
       configured: true,
       online: response.ok,
-      runtime: response.ok ? "minicpm-o-4.5-cpp" : "unavailable",
+      runtime: response.ok ? "minicpm-o-4.5" : "unavailable",
+      runtimeLabel,
       gatewayUrl: baseUrl,
       demoUrl: `${baseUrl}/audio_duplex`,
       omniUrl: `${baseUrl}/omni`,
@@ -32,6 +35,7 @@ export async function GET() {
       configured: true,
       online: false,
       runtime: "unavailable",
+      runtimeLabel,
       gatewayUrl: baseUrl,
       demoUrl: `${baseUrl}/audio_duplex`,
       omniUrl: `${baseUrl}/omni`,

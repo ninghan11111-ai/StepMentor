@@ -13,6 +13,8 @@
     "local:omni:start": "bash scripts/start-local-omni.sh",
     "local:omni:stop": "bash scripts/stop-local-omni.sh",
     "local:omni:check": "bash scripts/check-local-omni.sh",
+    "ascend:omni:setup": "bash scripts/setup-ascend-910c-omni.sh",
+    "ascend:omni:start": "bash scripts/start-ascend-910c-omni.sh",
     "test": "npm run build && node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
   },

@@ -13,6 +13,7 @@ WORKER_PORT="${MINICPM_WORKER_PORT:-22440}"
 CPP_PORT="${MINICPM_CPP_PORT:-19080}"
 CTX_SIZE="${MINICPM_CTX_SIZE:-4096}"
 MODEL_FILE="${MINICPM_MODEL_FILE:-MiniCPM-o-4_5-Q4_K_M.gguf}"
+CPP_SERVER_BIN="${MINICPM_CPP_SERVER_BIN:-$LLAMACPP_DIR/build/bin/llama-server}"
 
 require_file() {
   if [[ ! -f "$1" ]]; then
@@ -23,7 +24,7 @@ require_file() {
 
 require_file "$PYTHON_BIN"
 require_file "$DEMO_DIR/config.example.json"
-require_file "$LLAMACPP_DIR/build/bin/llama-server"
+require_file "$CPP_SERVER_BIN"
 require_file "$MODEL_DIR/$MODEL_FILE"
 
 mkdir -p "$DEMO_DIR/tmp"

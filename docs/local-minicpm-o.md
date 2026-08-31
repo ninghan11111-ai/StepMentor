@@ -68,3 +68,62 @@ MINICPM_REALTIME_URL=http://127.0.0.1:8040
 ## 硬件边界
 
 16GB Apple Silicon 可以尝试 Q4_K_M 全模态推理，但全双工实时性没有保证。若持续出现内存压力或音频生成明显落后，优先使用半双工页面完成产品开发，并把竞赛最终的全双工性能验证放到官方昇腾环境。
+
+## 云端接入
+
+StepMentor 的 `/live` 页面连接的是 MiniCPM-o Comni Gateway 的双工 WebSocket：
+
+```text
+GET  {MINICPM_REALTIME_URL}/health
+WS   {MINICPM_REALTIME_URL}/ws/duplex/{session_id}
+```
+
+云端必须跑完整的 Gateway + Worker + MiniCPM-o 后端，而不是只跑静态推理脚本。先在云端验证：
+
+```bash
+curl http://127.0.0.1:<gateway-port>/health
+curl http://127.0.0.1:<gateway-port>/workers
+```
+
+开发阶段建议先用 SSH 隧道，不暴露公网端口：
+
+```bash
+ssh -N -L 8040:127.0.0.1:<gateway-port> <user>@<server-ip>
+```
+
+然后本地 `.env.local` 保持：
+
+```env
+MINICPM_REALTIME_URL=http://127.0.0.1:8040
+MINICPM_REALTIME_LABEL=Cloud Ascend MiniCPM-o 4.5
+```
+
+若直接给浏览器访问云端 Gateway，需要有效 HTTPS/WSS。公网 HTTP 或自签名 WSS 可能导致浏览器拒绝麦克风、摄像头或 WebSocket。
+
+## 实时双工参数
+
+当前前端按 16kHz、float32、单声道发送音频，模型 chunk 对齐为 500ms：
+
+```text
+sample_rate=16000
+chunk_ms=500
+capture_chunk_samples=8000
+```
+
+官方双工 schema 的默认 chunk 是 1000ms，最小值是 100ms。40ms 到 100ms 的小包更适合做网关层 Gate VAD 和抢断检测，不建议直接逐包喂给 MiniCPM-o 生成，否则每秒推理次数过高，反而增加卡顿。
+
+## 卡点监测边界
+
+页面已持续上传学习场景视频帧，并在学生连续 3 分钟无明显语音输入时触发一次高优先级视觉检查。官方 `audio_chunk` 协议目前只稳定支持音频、视频帧和 `force_listen`，不支持把“学生卡住 3 分钟”这类文本事件直接注入双工上下文。
+
+最终版本建议在云端 Gateway 增加一个 StepMentor adapter：
+
+```text
+Browser -> StepMentor Gateway Adapter -> Official MiniCPM-o Gateway/Worker
+```
+
+Adapter 负责三件事：
+
+- Gate VAD：20ms 到 40ms 小窗检测打断，只用于 clear buffer 和 force listen。
+- Progress Event：把 3 分钟无进展、画面相似、草稿未变化等事件转成 MiniCPM-o 可理解的上下文。
+- Metrics：记录首字延迟、首音频延迟、wall clock、LLM/TTS 耗时、丢 chunk 数和视觉 token 数。

@@ -18,6 +18,8 @@
 - 学习场景摄像头预览与 1 FPS MiniCPM-o Omni 视频帧输入
 - 按音频进度、中英文词边界同步的字幕
 - 浏览器 AEC、降噪与自动增益请求及实际状态展示
+- 云端 MiniCPM-o Gateway 接入标签、实时 LLM/TTS/视觉指标展示
+- 3 分钟无明显学生语音输入时触发高优先级视觉卡点检查
 
 ## 本地运行
 
@@ -58,6 +60,15 @@ cp .env.example .env.local
 - `MINICPM_API_KEY`：可选鉴权令牌
 - `MINICPM_MODEL`：服务注册的模型名
 - `MINICPM_REALTIME_URL`：官方 Comni 实时语音 Gateway 地址
+- `MINICPM_REALTIME_LABEL`：页面展示的运行环境名称，例如 `Cloud Ascend MiniCPM-o 4.5`
+
+开发时接云端推荐先用 SSH 隧道：
+
+```bash
+ssh -N -L 8040:127.0.0.1:<gateway-port> <user>@<server-ip>
+```
+
+此时 `.env.local` 仍可使用 `MINICPM_REALTIME_URL=http://127.0.0.1:8040`，避免公网 HTTP/WSS 影响浏览器麦克风和摄像头权限。
 
 ## 演示流程
 
@@ -73,7 +84,7 @@ cp .env.example .env.local
 app/page.tsx             交互式学习工作台
 app/api/coach/route.ts   MiniCPM-o 适配与演示回退
 app/api/runtime/route.ts 本地实时 Gateway 健康检查
-app/live/page.tsx        数字教师双工语音课堂
+app/live/page.tsx        数字教师双工语音课堂、云端 Gateway 客户端与实时指标
 components/talking-mentor.tsx 林老师固定素材、流式 PCM 播放与音频驱动微动
 app/globals.css          响应式界面样式
 vendor/talkinghead/      TalkingHead MIT 渲染与播放模块

@@ -33,8 +33,11 @@ type SessionState =
 type RuntimeStatus = {
   configured: boolean;
   online: boolean;
+  runtime?: string;
+  runtimeLabel?: string;
   gatewayUrl?: string;
   demoUrl?: string;
+  omniUrl?: string;
 };
 
 type ServerMessage = {
@@ -46,7 +49,20 @@ type ServerMessage = {
   is_listen?: boolean;
   audio_data?: string;
   kv_cache_length?: number;
+  wall_clock_ms?: number;
+  cost_llm_ms?: number;
+  cost_tts_ms?: number;
+  cost_token2wav_ms?: number;
+  vision_tokens?: number;
 };
+
+const INPUT_SAMPLE_RATE = 16000;
+const MODEL_CHUNK_MS = 500;
+const CAPTURE_CHUNK_SAMPLES = (INPUT_SAMPLE_RATE * MODEL_CHUNK_MS) / 1000;
+const OUTPUT_SAMPLE_RATE = 24000;
+const ACTIVE_AUDIO_RMS = 0.012;
+const STUCK_HINT_MS = 3 * 60 * 1000;
+const STUCK_HINT_COOLDOWN_MS = 70 * 1000;
 
 const stateCopy: Record<SessionState, string> = {
   offline: "等待连接",
@@ -61,7 +77,8 @@ const stateCopy: Record<SessionState, string> = {
 const teacherPrompt = `你是 StepMentor 的林老师，一名高中数学苏格拉底学习教练。
 你需要用自然、简短的中文与学生实时交流。不要直接公布完整答案，先判断学生卡点，再提出一个具体问题，引导学生说出下一步。
 说话时优先输出完整短句，不要把一句话拆成零碎词组。学生没有说清思路时，用一个方向提示；学生答对时，指出具体正确证据并继续追问。每次只说一到两个短句。
-语言要跟随学生和教学内容自然切换。中文讲解时，数字、序号和算式按中文自然口语读出；英语学习、英文术语或学生要求英文时，使用自然英语，不要为了避免英文而生硬翻译。`;
+语言要跟随学生和教学内容自然切换。中文讲解时，数字、序号和算式按中文自然口语读出；英语学习、英文术语或学生要求英文时，使用自然英语，不要为了避免英文而生硬翻译。
+你会持续看到学生展示的题目、草稿纸或屏幕画面。若学生长时间沉默、画面停留在同一解题步骤，先指出你观察到的卡点证据，再用一个苏格拉底式问题点拨，不要直接讲完整解法。`;
 
 function arrayBufferToBase64(buffer: ArrayBufferLike) {
   const bytes = new Uint8Array(buffer);
@@ -97,6 +114,11 @@ export default function LiveClassroom() {
   const [errorText, setErrorText] = useState("");
   const [kvTokens, setKvTokens] = useState(0);
   const [avatarLevel, setAvatarLevel] = useState(0);
+  const [wallClockMs, setWallClockMs] = useState(0);
+  const [llmMs, setLlmMs] = useState(0);
+  const [ttsMs, setTtsMs] = useState(0);
+  const [visionTokens, setVisionTokens] = useState(0);
+  const [stuckText, setStuckText] = useState("等待开始");
 
   const wsRef = useRef<WebSocket | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -117,6 +139,9 @@ export default function LiveClassroom() {
   const wasListeningRef = useRef(true);
   const captionDisplayedRef = useRef("");
   const avatarLevelTimerRef = useRef<number | null>(null);
+  const monitorTimerRef = useRef<number | null>(null);
+  const lastLearnerActivityAtRef = useRef(Date.now());
+  const lastStuckProbeAtRef = useRef(0);
 
   const handleAvatarReadyChange = useCallback((ready: boolean) => {
     setAvatarReady(ready);
@@ -135,6 +160,7 @@ export default function LiveClassroom() {
       captureNodeRef.current?.disconnect();
       void inputContextRef.current?.close();
       void outputContextRef.current?.close();
+      if (monitorTimerRef.current !== null) window.clearInterval(monitorTimerRef.current);
     };
   }, []);
 
@@ -168,7 +194,7 @@ export default function LiveClassroom() {
       sumSquares += samples[index] * samples[index];
     }
     const level = Math.min(1, Math.max(0.16, Math.sqrt(sumSquares / samples.length) * 9));
-    const durationMs = (samples.length / 24000) * 1000;
+    const durationMs = (samples.length / OUTPUT_SAMPLE_RATE) * 1000;
 
     if (talkingMentorRef.current?.streamAudio(samples)) {
       setAvatarLevel(level);
@@ -183,7 +209,7 @@ export default function LiveClassroom() {
       outputContextRef.current = outputContext;
     }
 
-    const audioBuffer = outputContext.createBuffer(1, samples.length, 24000);
+    const audioBuffer = outputContext.createBuffer(1, samples.length, OUTPUT_SAMPLE_RATE);
     audioBuffer.copyToChannel(samples, 0);
 
     const source = outputContext.createBufferSource();
@@ -237,14 +263,14 @@ export default function LiveClassroom() {
       await videoPreviewRef.current.play();
     }
 
-    const context = new AudioContext({ sampleRate: 16000 });
+    const context = new AudioContext({ sampleRate: INPUT_SAMPLE_RATE });
     inputContextRef.current = context;
     await context.audioWorklet.addModule("/capture-processor.js");
     await context.resume();
 
     const source = context.createMediaStreamSource(stream);
     const captureNode = new AudioWorkletNode(context, "stepmentor-capture", {
-      processorOptions: { chunkSize: 16000 },
+      processorOptions: { chunkSize: CAPTURE_CHUNK_SAMPLES },
     });
     const silentGain = context.createGain();
     silentGain.gain.value = 0;
@@ -260,6 +286,13 @@ export default function LiveClassroom() {
       }
 
       const sourceAudio = event.data.audio;
+      let sumSquares = 0;
+      for (let index = 0; index < sourceAudio.length; index += 1) {
+        sumSquares += sourceAudio[index] * sourceAudio[index];
+      }
+      if (Math.sqrt(sumSquares / Math.max(sourceAudio.length, 1)) > ACTIVE_AUDIO_RMS) {
+        lastLearnerActivityAtRef.current = Date.now();
+      }
       const audio = mutedRef.current ? new Float32Array(sourceAudio.length) : sourceAudio;
       const message: Record<string, unknown> = {
         type: "audio_chunk",
@@ -335,6 +368,12 @@ export default function LiveClassroom() {
         setAvatarLevel(0);
       }
       if (message.kv_cache_length) setKvTokens(message.kv_cache_length);
+      if (message.wall_clock_ms) setWallClockMs(message.wall_clock_ms);
+      if (message.cost_llm_ms) setLlmMs(message.cost_llm_ms);
+      if (message.cost_tts_ms || message.cost_token2wav_ms) {
+        setTtsMs((message.cost_tts_ms ?? 0) + (message.cost_token2wav_ms ?? 0));
+      }
+      if (message.vision_tokens) setVisionTokens(message.vision_tokens);
       return;
     }
 
@@ -356,7 +395,7 @@ export default function LiveClassroom() {
 
   async function startSession() {
     if (!runtime?.online || !runtime.gatewayUrl) {
-      setErrorText("本地 MiniCPM-o Gateway 未启动");
+      setErrorText("MiniCPM-o Gateway 未启动或无法访问");
       setSessionState("error");
       return;
     }
@@ -367,6 +406,9 @@ export default function LiveClassroom() {
 
     try {
       await prepareMicrophone();
+      lastLearnerActivityAtRef.current = Date.now();
+      lastStuckProbeAtRef.current = 0;
+      setStuckText("监测中");
       const avatarStreaming = await talkingMentorRef.current?.startStream();
       if (!avatarStreaming) {
         const outputContext = new AudioContext();
@@ -392,9 +434,9 @@ export default function LiveClassroom() {
           deferred_finalize: true,
           config: {
             generate_audio: true,
-            chunk_ms: 500,
-            sample_rate: 16000,
-            force_listen_count: 0,
+            chunk_ms: MODEL_CHUNK_MS,
+            sample_rate: INPUT_SAMPLE_RATE,
+            force_listen_count: 1,
             max_new_speak_tokens_per_chunk: 24,
             length_penalty: 1,
           },
@@ -421,6 +463,8 @@ export default function LiveClassroom() {
         mediaStreamRef.current = null;
         if (!connectionFailed) setSessionState("offline");
       };
+      if (monitorTimerRef.current !== null) window.clearInterval(monitorTimerRef.current);
+      monitorTimerRef.current = window.setInterval(runProgressMonitor, 1000);
     } catch (error) {
       setErrorText(error instanceof Error ? error.message : "无法打开麦克风");
       setSessionState("error");
@@ -441,6 +485,9 @@ export default function LiveClassroom() {
     captureNodeRef.current?.disconnect();
     captureNodeRef.current = null;
     if (videoPreviewRef.current) videoPreviewRef.current.srcObject = null;
+    if (monitorTimerRef.current !== null) window.clearInterval(monitorTimerRef.current);
+    monitorTimerRef.current = null;
+    setStuckText("等待开始");
     setCameraAvailable(false);
     setAecActive(null);
     void inputContextRef.current?.close();
@@ -485,6 +532,38 @@ export default function LiveClassroom() {
     });
   }
 
+  function runProgressMonitor() {
+    if (!sessionReadyRef.current || pausedRef.current) return;
+
+    const elapsedMs = Date.now() - lastLearnerActivityAtRef.current;
+    const remainingSeconds = Math.max(0, Math.ceil((STUCK_HINT_MS - elapsedMs) / 1000));
+    if (remainingSeconds > 0) {
+      setStuckText(`剩余 ${remainingSeconds}s`);
+      return;
+    }
+
+    setStuckText("触发检查");
+    const now = Date.now();
+    if (now - lastStuckProbeAtRef.current < STUCK_HINT_COOLDOWN_MS) return;
+    lastStuckProbeAtRef.current = now;
+    sendStuckProbe();
+  }
+
+  function sendStuckProbe() {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    const message: Record<string, unknown> = {
+      type: "audio_chunk",
+      audio_base64: arrayBufferToBase64(new Float32Array(CAPTURE_CHUNK_SAMPLES).buffer),
+      max_slice_nums: 2,
+      stuck_probe: true,
+    };
+    const frame = captureLearningFrame();
+    if (frame) message.frame_base64_list = [frame];
+    ws.send(JSON.stringify(message));
+  }
+
   const sessionActive = ["connecting", "preparing", "listening", "speaking", "paused"].includes(sessionState);
 
   return (
@@ -496,7 +575,7 @@ export default function LiveClassroom() {
         </Link>
         <div className="live-title">
           <strong>StepMentor 实时课堂</strong>
-          <span>MiniCPM-o 4.5 · 本地双工引擎</span>
+          <span>{runtime?.runtimeLabel ?? "MiniCPM-o 4.5 Gateway"} · 双工引擎</span>
         </div>
         <span className={`live-runtime ${runtime?.online ? "is-online" : ""}`}>
           <span />
@@ -554,19 +633,35 @@ export default function LiveClassroom() {
           <div className="live-metrics">
             <div>
               <span>模型</span>
-              <strong>Q4_K_M</strong>
+              <strong>{runtime?.runtime === "minicpm-o-4.5" ? "MiniCPM-o" : "待连接"}</strong>
             </div>
             <div>
               <span>上下文</span>
               <strong>{kvTokens > 0 ? kvTokens.toLocaleString() : "4,096"}</strong>
             </div>
             <div>
-              <span>数字人</span>
-              <strong>{avatarReady ? "林老师素材" : "载入中"}</strong>
+              <span>延迟</span>
+              <strong>{wallClockMs > 0 ? `${Math.round(wallClockMs)}ms` : "-"}</strong>
             </div>
             <div>
               <span>AEC</span>
               <strong>{aecActive === null ? "待检测" : aecActive ? "已启用" : "未启用"}</strong>
+            </div>
+            <div>
+              <span>LLM/TTS</span>
+              <strong>{llmMs || ttsMs ? `${Math.round(llmMs)}/${Math.round(ttsMs)}ms` : "-"}</strong>
+            </div>
+            <div>
+              <span>视觉</span>
+              <strong>{visionTokens > 0 ? `${visionTokens} tok` : "待输入"}</strong>
+            </div>
+            <div>
+              <span>数字人</span>
+              <strong>{avatarReady ? "林老师素材" : "载入中"}</strong>
+            </div>
+            <div>
+              <span>卡点监测</span>
+              <strong>{stuckText}</strong>
             </div>
           </div>
 
